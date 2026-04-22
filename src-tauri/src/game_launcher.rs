@@ -1,7 +1,7 @@
 use crate::emulator_registry::{built_in_emulators, EmulatorDefinition};
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
