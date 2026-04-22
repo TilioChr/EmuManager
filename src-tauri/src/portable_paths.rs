@@ -14,54 +14,36 @@ pub struct PortablePaths {
     pub data: String,
 }
 
-impl PortablePaths {
-    pub fn from_root(root: PathBuf) -> Self {
-        let emu = root.join("Emu");
-        let roms = root.join("Roms");
-        let saves = root.join("Saves");
-        let firmware = root.join("Firmware");
-        let config = root.join("Config");
-        let data = root.join("Data");
-
-        Self {
-            root: display_path(&root),
-            emu: display_path(&emu),
-            roms: display_path(&roms),
-            saves: display_path(&saves),
-            firmware: display_path(&firmware),
-            config: display_path(&config),
-            data: display_path(&data),
-        }
-    }
-}
-
 pub fn default_root() -> PathBuf {
-    std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("EmuManager")
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+
+    exe_dir.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    })
 }
 
 pub fn ensure_portable_tree(root: &Path) -> Result<PortablePaths, String> {
-    let paths = PortablePaths::from_root(root.to_path_buf());
+    let emu = root.join("Emu");
+    let roms = root.join("Roms");
+    let saves = root.join("Saves");
+    let firmware = root.join("Firmware");
+    let config = root.join("Config");
+    let data = root.join("Data");
 
-    for dir in [
-        root.to_path_buf(),
-        root.join("Emu"),
-        root.join("Roms"),
-        root.join("Saves"),
-        root.join("Firmware"),
-        root.join("Config"),
-        root.join("Data"),
-    ] {
-        fs::create_dir_all(&dir)
-            .map_err(|error| format!("Impossible de créer {}: {}", display_path(&dir), error))?;
+    for path in [&emu, &roms, &saves, &firmware, &config, &data] {
+        fs::create_dir_all(path)
+            .map_err(|error| format!("Impossible de créer {}: {}", path.to_string_lossy(), error))?;
     }
 
-    Ok(paths)
-}
-
-fn display_path(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    Ok(PortablePaths {
+        root: root.to_string_lossy().to_string(),
+        emu: emu.to_string_lossy().to_string(),
+        roms: roms.to_string_lossy().to_string(),
+        saves: saves.to_string_lossy().to_string(),
+        firmware: firmware.to_string_lossy().to_string(),
+        config: config.to_string_lossy().to_string(),
+        data: data.to_string_lossy().to_string(),
+    })
 }

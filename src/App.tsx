@@ -25,7 +25,7 @@ import type {
   PortablePaths
 } from "./types";
 
-const fallbackPaths = buildPortablePaths("C:\\Users\\Tilio\\Documents\\EmuManager");
+const fallbackPaths = buildPortablePaths(".");
 
 const initialPaths: PortablePaths = {
   ...fallbackPaths,
@@ -107,9 +107,7 @@ export default function App() {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const portablePaths = await invoke<PortablePaths>("init_portable_layout", {
-          root: fallbackPaths.root
-        });
+        const portablePaths = await invoke<PortablePaths>("init_portable_layout");
         setPaths(portablePaths);
 
         const savedConfig = await invoke<AppConfig>("load_app_config", {
@@ -246,7 +244,7 @@ export default function App() {
       setSelectedEmulatorId(replacement?.id ?? null);
     }
 
-    setGeneralMessage(`Marquage retiré pour ${id}. Les fichiers installés n'ont pas été supprimés.`);
+    setGeneralMessage(`Removed ${id} from the installed list. Existing files were not deleted.`);
   };
 
   const configureSelectedEmulator = async (id: string) => {
@@ -256,7 +254,7 @@ export default function App() {
         root: paths.root,
         emulatorId: id
       });
-      setGeneralMessage(`Configuration réappliquée : ${result.userDirectory}`);
+      setGeneralMessage(`Configuration reapplied: ${result.userDirectory}`);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
       setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
@@ -268,7 +266,7 @@ export default function App() {
   const installSelectedEmulator = async (id: string) => {
     try {
       setInstallingId(id);
-      setGeneralMessage(`Téléchargement et installation de ${id} en cours...`);
+      setGeneralMessage(`Downloading and installing ${id}...`);
 
       const result = await invoke<InstallResult>("install_emulator_command", {
         root: paths.root,
@@ -302,10 +300,10 @@ export default function App() {
         });
 
         setGeneralMessage(
-          `${id} installé dans ${result.installPath} et configuré dans ${configResult.userDirectory}`
+          `${id} installed in ${result.installPath} and configured in ${configResult.userDirectory}`
         );
       } catch {
-        setGeneralMessage(`${id} installé dans ${result.installPath}`);
+        setGeneralMessage(`${id} installed in ${result.installPath}`);
       }
 
       await refreshInstalledVersions(paths.root);
@@ -323,7 +321,7 @@ export default function App() {
         root: paths.root,
         emulatorId: id
       });
-      setGeneralMessage(`Émulateur lancé depuis ${result.executablePath}`);
+      setGeneralMessage(`Emulator launched from ${result.executablePath}`);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
       setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
@@ -346,7 +344,7 @@ export default function App() {
     await persistConfig(nextConfig);
     setLibraryNotice({
       type: "success",
-      message: `Connexion RomM réussie pour ${username}.`
+      message: `Connected to RomM as ${username}.`
     });
   };
 
@@ -354,7 +352,7 @@ export default function App() {
     if (!rommSession) {
       setLibraryNotice({
         type: "error",
-        message: "Connexion RomM requise."
+        message: "RomM connection required."
       });
       return;
     }
@@ -364,7 +362,7 @@ export default function App() {
     if (!downloadUrl) {
       setLibraryNotice({
         type: "error",
-        message: `Impossible de résoudre l'URL de téléchargement pour "${game.name}".`
+        message: `Unable to resolve the download URL for "${game.name}".`
       });
       return;
     }
@@ -378,7 +376,7 @@ export default function App() {
       setDownloadPercent(0);
       setLibraryNotice({
         type: "info",
-        message: `Téléchargement de "${game.name}" dans Roms/${relativeSubdir}...`
+        message: `Downloading "${game.name}" to Roms/${relativeSubdir}...`
       });
 
       const result = await invoke<DownloadResult>("download_rom_command", {
@@ -397,7 +395,7 @@ export default function App() {
 
       setLibraryNotice({
         type: "success",
-        message: `ROM téléchargée dans ${result.filePath}`
+        message: `ROM downloaded to ${result.filePath}`
       });
     } catch (reason) {
       setLibraryNotice({
@@ -416,7 +414,7 @@ export default function App() {
         root: paths.root,
         romPath
       });
-      setGeneralMessage(`Jeu lancé avec ${result.emulatorId} : ${result.romPath}`);
+      setGeneralMessage(`Game launched with ${result.emulatorId}: ${result.romPath}`);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
       setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
@@ -427,8 +425,8 @@ export default function App() {
     return (
       <div className="center-screen">
         <div className="panel loading-panel">
-          <p className="eyebrow">Initialisation</p>
-          <h2>Préparation de l'environnement portable</h2>
+          <h2 className="panel-title">Initialization</h2>
+          <p className="panel-subtitle">Preparing portable environment</p>
         </div>
       </div>
     );
@@ -438,8 +436,8 @@ export default function App() {
     return (
       <div className="center-screen">
         <div className="panel loading-panel">
-          <p className="eyebrow">Erreur</p>
-          <h2>Impossible d'initialiser EmuManager</h2>
+          <h2 className="panel-title">Error</h2>
+          <p className="panel-subtitle">Failed to initialize EmuManager</p>
           <p>{error}</p>
         </div>
       </div>
@@ -450,13 +448,12 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div>
-          <p className="eyebrow">EmuManager</p>
-          <h1>Émulateurs</h1>
-          <p className="muted">{installedCount} installés</p>
+          <h2 className="sidebar-title">EmuManager</h2>
+          <p className="muted">{installedCount} installed</p>
         </div>
 
         <button className="primary-button" onClick={() => setShowPicker(true)}>
-          Gérer la liste
+          Emulators
         </button>
 
         <nav className="emulator-list">
@@ -473,25 +470,25 @@ export default function App() {
               </button>
             ))}
 
-          {installedCount === 0 && (
+          {installedCount === 0 ? (
             <div className="empty-state">
-              <p>Aucun émulateur installé</p>
-              <small>Ajoute tes premiers émulateurs avec le bouton ci-dessus.</small>
+              <p>No emulator installed</p>
             </div>
-          )}
+          ) : null}
         </nav>
       </aside>
 
       <main className="content">
-        <CollapsiblePanel eyebrow="Émulateur sélectionné" title={selectedEmulator?.name ?? "Aucun émulateur"}>
+        <CollapsiblePanel eyebrow="Selected Emulator" title={selectedEmulator?.name}>
           {selectedEmulator ? (
             <div className="selected-emulator-grid">
-              <StatusCard label="Plateforme" value={selectedEmulator.platformLabel} />
-              <StatusCard label="Version" value={selectedEmulator.version ?? selectedEmulator.catalogVersion ?? "Inconnue"} />
+              <StatusCard label="Platform" value={selectedEmulator.platformLabel} />
+              <StatusCard
+                label="Version"
+                value={selectedEmulator.version ?? selectedEmulator.catalogVersion ?? "Unknown"}
+              />
             </div>
-          ) : (
-            <p className="muted">Installe un émulateur pour commencer.</p>
-          )}
+          ) : null}
 
           <div className="selected-actions">
             <button
@@ -500,21 +497,14 @@ export default function App() {
               onClick={() => selectedEmulator && void launchSelectedEmulator(selectedEmulator.id)}
             >
               {selectedEmulator && launchingId === selectedEmulator.id
-                ? "Lancement..."
-                : "Ouvrir l'émulateur"}
-            </button>
-            <button
-              className="primary-button compact-button"
-              disabled={!selectedEmulator || configuringId === selectedEmulator.id}
-              onClick={() => selectedEmulator && void configureSelectedEmulator(selectedEmulator.id)}
-            >
-              {selectedEmulator && configuringId === selectedEmulator.id
-                ? "Configuration..."
-                : "Configurer l'émulateur"}
+                ? "Launching..."
+                : "Open emulator"}
             </button>
           </div>
 
-          {generalMessage && <div className="inline-notice inline-notice-info top-gap">{generalMessage}</div>}
+          {generalMessage ? (
+            <div className="inline-notice inline-notice-info top-gap">{generalMessage}</div>
+          ) : null}
         </CollapsiblePanel>
 
         <RommConnectionCard
@@ -532,19 +522,18 @@ export default function App() {
           downloadPercent={downloadPercent}
           notice={libraryNotice}
         />
-
       </main>
 
-      {showPicker && (
+      {showPicker ? (
         <div className="modal-backdrop" onClick={() => setShowPicker(false)}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <p className="eyebrow">Installation</p>
-                <h3>Choisir les émulateurs</h3>
+                <h2 className="panel-title">Choose emulators</h2>
+                <p className="panel-subtitle">Installation</p>
               </div>
               <button className="ghost-button" onClick={() => setShowPicker(false)}>
-                Fermer
+                Close
               </button>
             </div>
 
@@ -567,10 +556,10 @@ export default function App() {
                       }
                     >
                       {isInstalling
-                        ? "Installation..."
+                        ? "Installing..."
                         : isInstalled
-                          ? "Retirer"
-                          : "Installer"}
+                          ? "Remove"
+                          : "Install"}
                     </button>
                   </div>
                 );
@@ -578,7 +567,7 @@ export default function App() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -4,6 +4,7 @@ export interface EmulatorEntry {
   id: string;
   name: string;
   platformLabel: string;
+  catalogVersion?: string;
   status: EmulatorStatus;
   version?: string;
 }
