@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ControllerBinding, ControllerProfile, EmulatorEntry } from "../types";
+import CollapsiblePanel from "./CollapsiblePanel";
 
 interface ControllerMappingPanelProps {
   selectedEmulator: EmulatorEntry | null;
@@ -10,8 +11,8 @@ interface ControllerMappingPanelProps {
 const defaultBindings: ControllerBinding[] = [
   { physicalInput: "A", emulatedInput: "Bouton A" },
   { physicalInput: "B", emulatedInput: "Bouton B" },
-  { physicalInput: "X", emulatedInput: "Bouton 1" },
-  { physicalInput: "Y", emulatedInput: "Bouton 2" },
+  { physicalInput: "X", emulatedInput: "Bouton X" },
+  { physicalInput: "Y", emulatedInput: "Bouton Y" },
   { physicalInput: "LB", emulatedInput: "Z" },
   { physicalInput: "Start", emulatedInput: "Start" }
 ];
@@ -26,9 +27,7 @@ export default function ControllerMappingPanel({
       return null;
     }
 
-    return (
-      profiles.find((profile) => profile.emulatorId === selectedEmulator.id) ?? null
-    );
+    return profiles.find((profile) => profile.emulatorId === selectedEmulator.id) ?? null;
   }, [profiles, selectedEmulator]);
 
   const [profileName, setProfileName] = useState("");
@@ -104,10 +103,7 @@ export default function ControllerMappingPanel({
   };
 
   return (
-    <section className="panel">
-      <p className="eyebrow">Manette</p>
-      <h2>Mapping simplifié</h2>
-
+    <CollapsiblePanel eyebrow="Manette" title="Mapping simplifié" defaultCollapsed>
       {!selectedEmulator && <p className="muted">Sélectionne un émulateur pour préparer un profil.</p>}
 
       {selectedEmulator && (
@@ -169,6 +165,6 @@ export default function ControllerMappingPanel({
           {message && <p className="form-message success-message status-message">{message}</p>}
         </form>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }

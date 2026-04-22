@@ -1,7 +1,6 @@
-use crate::emulator_registry::{built_in_emulators, EmulatorDefinition};
+use crate::emulator_installer::resolve_emulator_executable;
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;
-use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,18 +13,7 @@ pub struct LaunchResult {
 }
 
 pub fn launch_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<LaunchResult, String> {
-    let definition = built_in_emulators()
-        .into_iter()
-        .find(|entry| entry.id == emulator_id)
-        .ok_or_else(|| format!("Émulateur non supporté: {}", emulator_id))?;
-
-    let executable_path = emulator_executable_path(paths, &definition);
-    if !executable_path.exists() {
-        return Err(format!(
-            "Exécutable introuvable: {}",
-            executable_path.to_string_lossy()
-        ));
-    }
+    let executable_path = resolve_emulator_executable(paths, emulator_id)?;
 
     let working_directory = executable_path
         .parent()
@@ -43,10 +31,4 @@ pub fn launch_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<Launc
         working_directory: working_directory.to_string_lossy().to_string(),
         launched: true,
     })
-}
-
-fn emulator_executable_path(paths: &PortablePaths, definition: &EmulatorDefinition) -> PathBuf {
-    PathBuf::from(&paths.emu)
-        .join(definition.install_dir_name)
-        .join(definition.executable_rel_path)
 }

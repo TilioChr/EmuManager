@@ -1,4 +1,5 @@
-use crate::emulator_registry::{built_in_emulators, EmulatorDefinition};
+use crate::emulator_installer::resolve_emulator_executable;
+use crate::platform_router::resolve_emulator_id_for_rom_path;
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -18,18 +19,7 @@ pub fn launch_game(
     emulator_id: &str,
     rom_path: &str,
 ) -> Result<GameLaunchResult, String> {
-    let definition = built_in_emulators()
-        .into_iter()
-        .find(|entry| entry.id == emulator_id)
-        .ok_or_else(|| format!("Émulateur non supporté: {}", emulator_id))?;
-
-    let executable_path = emulator_executable_path(paths, &definition);
-    if !executable_path.exists() {
-        return Err(format!(
-            "Exécutable introuvable: {}",
-            executable_path.to_string_lossy()
-        ));
-    }
+    let executable_path = resolve_emulator_executable(paths, emulator_id)?;
 
     let rom = PathBuf::from(rom_path);
     if !rom.exists() {
@@ -41,19 +31,39 @@ pub fn launch_game(
         .ok_or_else(|| "Impossible de déterminer le dossier de travail".to_string())?
         .to_path_buf();
 
+    let mut command = Command::new(&executable_path);
+    command.current_dir(&working_directory);
+
     match emulator_id {
         "dolphin" => {
-            Command::new(&executable_path)
-                .current_dir(&working_directory)
-                .arg("--exec")
-                .arg(&rom)
-                .spawn()
-                .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
+            command.arg("--exec").arg(&rom);
+        }
+        "melonds" => {
+            command.arg(&rom);
+        }
+        "eden" => {
+            command.arg(&rom);
+        }
+        "pcsx2" => {
+            command.arg("-batch").arg("--").arg(&rom);
+        }
+        "azahar" => {
+            command.arg(&rom);
+        }
+        "ppsspp" => {
+            command.arg(&rom);
+        }
+        "duckstation" => {
+            command.arg("-batch").arg(&rom);
         }
         _ => {
             return Err(format!("Lancement de jeu non implémenté pour {}", emulator_id));
         }
     }
+
+    command
+        .spawn()
+        .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
     Ok(GameLaunchResult {
         emulator_id: emulator_id.to_string(),
@@ -63,8 +73,7 @@ pub fn launch_game(
     })
 }
 
-fn emulator_executable_path(paths: &PortablePaths, definition: &EmulatorDefinition) -> PathBuf {
-    PathBuf::from(&paths.emu)
-        .join(definition.install_dir_name)
-        .join(definition.executable_rel_path)
+pub fn launch_game_auto(paths: &PortablePaths, rom_path: &str) -> Result<GameLaunchResult, String> {
+    let emulator_id = resolve_emulator_id_for_rom_path(paths, rom_path)?;
+    launch_game(paths, &emulator_id, rom_path)
 }

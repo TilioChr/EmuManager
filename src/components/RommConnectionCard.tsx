@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { createRommSession, type RommSession } from "../lib/romm";
+import CollapsiblePanel from "./CollapsiblePanel";
 
 interface RommConnectionCardProps {
   defaultBaseUrl?: string;
@@ -43,9 +44,7 @@ export default function RommConnectionCard({
   };
 
   return (
-    <section className="panel">
-      <p className="eyebrow">RomM</p>
-      <h2>Connexion au serveur</h2>
+    <CollapsiblePanel eyebrow="RomM" title="Connexion au serveur">
       <form className="form-grid" onSubmit={handleSubmit}>
         <label className="field">
           <span>URL du serveur</span>
@@ -87,6 +86,6 @@ export default function RommConnectionCard({
         {error && <p className="form-message error-message">{error}</p>}
         {success && <p className="form-message success-message">{success}</p>}
       </form>
-    </section>
+    </CollapsiblePanel>
   );
 }

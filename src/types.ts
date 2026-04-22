@@ -86,3 +86,17 @@ export interface ControllerWriteResult {
   profilePath: string;
   gameIniPath: string;
 }
+
+export interface LocalRomEntry {
+  fileName: string;
+  filePath: string;
+  fileSizeBytes: number;
+  platformGuess: string;
+}
+
+export interface LocalSaveEntry {
+  fileName: string;
+  filePath: string;
+  fileSizeBytes: number;
+  platformGuess: string;
+}

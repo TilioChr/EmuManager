@@ -7,27 +7,53 @@ mod emulator_configurator;
 mod emulator_installer;
 mod emulator_registry;
 mod game_launcher;
+mod local_library;
+mod platform_router;
 mod portable_paths;
 mod process_launcher;
 mod rom_downloader;
 
 use config_store::{load_config, save_config, AppConfig};
-use controller_profiles::{
-    load_controller_profiles, save_controller_profiles, ControllerProfile,
+use dolphin_controller_writer::ControllerWriteResult;
+use emulator_configurator::ConfigureResult;
+use emulator_installer::{
+    get_installed_emulator_version, install_emulator, is_emulator_installed, InstallResult,
 };
-use dolphin_controller_writer::{apply_controller_profile, ControllerWriteResult};
-use emulator_configurator::{configure_emulator, ConfigureResult};
-use emulator_installer::{install_emulator, is_emulator_installed, InstallResult};
 use emulator_registry::{built_in_emulators, EmulatorDefinition};
-use game_launcher::{launch_game, GameLaunchResult};
+use game_launcher::{launch_game, launch_game_auto, GameLaunchResult};
+use local_library::{list_local_roms, list_local_saves, LocalRomEntry, LocalSaveEntry};
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult};
+use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledVersionMap {
+    versions: HashMap<String, String>,
+}
 
 #[tauri::command]
 fn get_builtin_emulators() -> Vec<EmulatorDefinition> {
     built_in_emulators()
+}
+
+#[tauri::command]
+fn get_installed_emulator_versions(root: Option<String>) -> Result<InstalledVersionMap, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+
+    let mut versions = HashMap::new();
+
+    for emulator in built_in_emulators() {
+      if let Ok(Some(version)) = get_installed_emulator_version(&paths, emulator.id) {
+          versions.insert(emulator.id.to_string(), version);
+      }
+    }
+
+    Ok(InstalledVersionMap { versions })
 }
 
 #[tauri::command]
@@ -51,30 +77,17 @@ fn save_app_config(root: Option<String>, config: AppConfig) -> Result<(), String
 }
 
 #[tauri::command]
-fn load_controller_profiles_command(root: Option<String>) -> Result<Vec<ControllerProfile>, String> {
+fn list_local_roms_command(root: Option<String>) -> Result<Vec<LocalRomEntry>, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    load_controller_profiles(&paths)
+    list_local_roms(&paths)
 }
 
 #[tauri::command]
-fn save_controller_profiles_command(
-    root: Option<String>,
-    profiles: Vec<ControllerProfile>,
-) -> Result<(), String> {
+fn list_local_saves_command(root: Option<String>) -> Result<Vec<LocalSaveEntry>, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    save_controller_profiles(&paths, &profiles)
-}
-
-#[tauri::command]
-fn apply_controller_profile_command(
-    root: Option<String>,
-    profile: ControllerProfile,
-) -> Result<ControllerWriteResult, String> {
-    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
-    let paths = ensure_portable_tree(&root_path)?;
-    apply_controller_profile(&paths, &profile)
+    list_local_saves(&paths)
 }
 
 #[tauri::command]
@@ -98,7 +111,7 @@ async fn install_emulator_command(
 fn configure_emulator_command(root: Option<String>, emulator_id: String) -> Result<ConfigureResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    configure_emulator(&paths, &emulator_id)
+    emulator_configurator::configure_emulator(&paths, &emulator_id)
 }
 
 #[tauri::command]
@@ -110,13 +123,28 @@ fn launch_emulator_command(root: Option<String>, emulator_id: String) -> Result<
 
 #[tauri::command]
 async fn download_rom_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     url: String,
     file_name: String,
+    bearer_token: Option<String>,
+    download_id: String,
+    expected_total_bytes: Option<u64>,
+    relative_subdir: Option<String>,
 ) -> Result<DownloadResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    download_rom_to_library(&paths, &url, &file_name).await
+    download_rom_to_library(
+        &app,
+        &paths,
+        &url,
+        &file_name,
+        bearer_token.as_deref(),
+        &download_id,
+        expected_total_bytes,
+        relative_subdir.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -130,22 +158,33 @@ fn launch_game_command(
     launch_game(&paths, &emulator_id, &rom_path)
 }
 
+#[tauri::command]
+fn launch_game_auto_command(
+    root: Option<String>,
+    rom_path: String,
+) -> Result<GameLaunchResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    launch_game_auto(&paths, &rom_path)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_builtin_emulators,
+            get_installed_emulator_versions,
             init_portable_layout,
             load_app_config,
             save_app_config,
-            load_controller_profiles_command,
-            save_controller_profiles_command,
-            apply_controller_profile_command,
+            list_local_roms_command,
+            list_local_saves_command,
             check_emulator_installed,
             install_emulator_command,
             configure_emulator_command,
             launch_emulator_command,
             download_rom_command,
-            launch_game_command
+            launch_game_command,
+            launch_game_auto_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running EmuManager");

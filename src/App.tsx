@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ControllerMappingPanel from "./components/ControllerMappingPanel";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import LibraryPanel from "./components/LibraryPanel";
 import RommConnectionCard from "./components/RommConnectionCard";
-import { resolveGameDownloadUrl, type RommGame, type RommSession } from "./lib/romm";
+import CollapsiblePanel from "./components/CollapsiblePanel";
+import {
+  resolveGameDownloadUrl,
+  resolveGameLocalFileName,
+  resolveGameRomSubdir,
+  type RommGame,
+  type RommSession
+} from "./lib/romm";
 import { buildPortablePaths } from "./lib/portableConfig";
 import type {
   AppConfig,
   ConfigureResult,
-  ControllerProfile,
-  ControllerWriteResult,
   DownloadResult,
   EmulatorEntry,
   GameLaunchResult,
   InstallResult,
   LaunchResult,
+  LocalRomEntry,
+  LocalSaveEntry,
   PortablePaths
 } from "./types";
 
@@ -26,23 +33,76 @@ const initialPaths: PortablePaths = {
   data: `${fallbackPaths.root}\\Data`
 };
 
+interface DownloadProgressPayload {
+  downloadId: string;
+  fileName: string;
+  downloadedBytes: number;
+  totalBytes?: number;
+  percent: number;
+}
+
+interface InstalledVersionMap {
+  versions: Record<string, string>;
+}
+
 export default function App() {
   const [paths, setPaths] = useState<PortablePaths>(initialPaths);
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
-  const [controllerProfiles, setControllerProfiles] = useState<ControllerProfile[]>([]);
+  const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
+  const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const [generalMessage, setGeneralMessage] = useState<string | null>(null);
+  const [libraryNotice, setLibraryNotice] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+
   const [config, setConfig] = useState<AppConfig>({ installedEmulators: [] });
   const [rommSession, setRommSession] = useState<RommSession | null>(null);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
   const [downloadingGameId, setDownloadingGameId] = useState<string | null>(null);
-  const [applyingProfileId, setApplyingProfileId] = useState<string | null>(null);
-  const [lastDownloadedRomPath, setLastDownloadedRomPath] = useState<string | null>(null);
+  const [downloadPercent, setDownloadPercent] = useState(0);
+
+  const refreshLocalRoms = async (root: string) => {
+    const roms = await invoke<LocalRomEntry[]>("list_local_roms_command", { root });
+    setLocalRoms(roms);
+  };
+
+  const refreshLocalSaves = async (root: string) => {
+    const saves = await invoke<LocalSaveEntry[]>("list_local_saves_command", { root });
+    setLocalSaves(saves);
+  };
+
+  const refreshInstalledVersions = async (
+    root: string,
+    currentEmulators?: Array<Omit<EmulatorEntry, "status">>,
+    installedIds?: string[]
+  ) => {
+    const versionMap = await invoke<InstalledVersionMap>("get_installed_emulator_versions", {
+      root
+    });
+
+    setEmulators((previous) => {
+      const source =
+        currentEmulators?.length
+          ? currentEmulators.map((emu) => ({
+              ...emu,
+              status: installedIds?.includes(emu.id) ? ("installed" as const) : ("not_installed" as const)
+            }))
+          : previous;
+
+      return source.map((emu) => ({
+        ...emu,
+        version: versionMap.versions[emu.id] ?? emu.catalogVersion ?? emu.version
+      }));
+    });
+  };
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -57,12 +117,10 @@ export default function App() {
         });
         setConfig(savedConfig);
 
-        const savedProfiles = await invoke<ControllerProfile[]>("load_controller_profiles_command", {
-          root: portablePaths.root
-        });
-        setControllerProfiles(savedProfiles);
+        await refreshLocalRoms(portablePaths.root);
+        await refreshLocalSaves(portablePaths.root);
 
-        const builtin = await invoke<Array<Omit<EmulatorEntry, "status" | "version">>>(
+        const builtin = await invoke<Array<Omit<EmulatorEntry, "status">>>(
           "get_builtin_emulators"
         );
 
@@ -98,10 +156,13 @@ export default function App() {
 
         const nextEmulators = builtin.map((emu) => ({
           ...emu,
-          status: mergedInstalledIds.includes(emu.id) ? "installed" : "not_installed"
+          status: mergedInstalledIds.includes(emu.id) ? ("installed" as const) : ("not_installed" as const),
+          version: emu.catalogVersion
         }));
 
         setEmulators(nextEmulators);
+
+        await refreshInstalledVersions(portablePaths.root, builtin, mergedInstalledIds);
 
         const firstInstalled = nextEmulators.find((entry) => entry.status === "installed");
         setSelectedEmulatorId(firstInstalled?.id ?? null);
@@ -113,6 +174,33 @@ export default function App() {
     };
 
     void bootstrap();
+  }, []);
+
+  useEffect(() => {
+    let unlistenProgress: UnlistenFn | null = null;
+    let unlistenComplete: UnlistenFn | null = null;
+
+    const setupListeners = async () => {
+      unlistenProgress = await listen<DownloadProgressPayload>("rom-download-progress", (event) => {
+        const payload = event.payload;
+        setDownloadPercent(payload.percent ?? 0);
+      });
+
+      unlistenComplete = await listen<DownloadProgressPayload>("rom-download-complete", () => {
+        setDownloadPercent(100);
+      });
+    };
+
+    void setupListeners();
+
+    return () => {
+      if (unlistenProgress) {
+        unlistenProgress();
+      }
+      if (unlistenComplete) {
+        unlistenComplete();
+      }
+    };
   }, []);
 
   const installedCount = useMemo(
@@ -133,35 +221,6 @@ export default function App() {
     setConfig(nextConfig);
   };
 
-  const persistControllerProfiles = async (profiles: ControllerProfile[]) => {
-    await invoke("save_controller_profiles_command", {
-      root: paths.root,
-      profiles
-    });
-    setControllerProfiles(profiles);
-  };
-
-  const saveControllerProfile = async (profile: ControllerProfile) => {
-    const nextProfiles = controllerProfiles.some((entry) => entry.id === profile.id)
-      ? controllerProfiles.map((entry) => (entry.id === profile.id ? profile : entry))
-      : [...controllerProfiles, profile];
-
-    await persistControllerProfiles(nextProfiles);
-
-    try {
-      setApplyingProfileId(profile.id);
-      const result = await invoke<ControllerWriteResult>("apply_controller_profile_command", {
-        root: paths.root,
-        profile
-      });
-      setActionMessage(`Profil appliqué à Dolphin : ${result.profilePath}`);
-    } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setApplyingProfileId(null);
-    }
-  };
-
   const removeInstalledFlag = async (id: string) => {
     const nextInstalledIds = config.installedEmulators.filter((entry) => entry !== id);
     const nextConfig: AppConfig = {
@@ -175,8 +234,7 @@ export default function App() {
       emu.id === id
         ? {
             ...emu,
-            status: "not_installed" as const,
-            version: undefined
+            status: "not_installed" as const
           }
         : emu
     );
@@ -188,7 +246,7 @@ export default function App() {
       setSelectedEmulatorId(replacement?.id ?? null);
     }
 
-    setActionMessage(`Marquage retiré pour ${id}. Les fichiers installés n'ont pas été supprimés.`);
+    setGeneralMessage(`Marquage retiré pour ${id}. Les fichiers installés n'ont pas été supprimés.`);
   };
 
   const configureSelectedEmulator = async (id: string) => {
@@ -198,23 +256,19 @@ export default function App() {
         root: paths.root,
         emulatorId: id
       });
-      setActionMessage(`Configuration portable prête : ${result.userDirectory}`);
+      setGeneralMessage(`Configuration réappliquée : ${result.userDirectory}`);
+      await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
+      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setConfiguringId(null);
     }
   };
 
   const installSelectedEmulator = async (id: string) => {
-    if (id !== "dolphin") {
-      setActionMessage(`${id} n'a pas encore d'installateur réel.`);
-      return;
-    }
-
     try {
       setInstallingId(id);
-      setActionMessage("Téléchargement et extraction de Dolphin en cours...");
+      setGeneralMessage(`Téléchargement et installation de ${id} en cours...`);
 
       const result = await invoke<InstallResult>("install_emulator_command", {
         root: paths.root,
@@ -233,8 +287,7 @@ export default function App() {
         emu.id === id
           ? {
               ...emu,
-              status: "installed" as const,
-              version: "2603a"
+              status: "installed" as const
             }
           : emu
       );
@@ -242,16 +295,22 @@ export default function App() {
       setEmulators(nextEmulators);
       setSelectedEmulatorId(id);
 
-      const configResult = await invoke<ConfigureResult>("configure_emulator_command", {
-        root: paths.root,
-        emulatorId: id
-      });
+      try {
+        const configResult = await invoke<ConfigureResult>("configure_emulator_command", {
+          root: paths.root,
+          emulatorId: id
+        });
 
-      setActionMessage(
-        `Dolphin installé dans ${result.installPath} et configuré en mode portable dans ${configResult.userDirectory}`
-      );
+        setGeneralMessage(
+          `${id} installé dans ${result.installPath} et configuré dans ${configResult.userDirectory}`
+        );
+      } catch {
+        setGeneralMessage(`${id} installé dans ${result.installPath}`);
+      }
+
+      await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
+      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setInstallingId(null);
     }
@@ -264,9 +323,10 @@ export default function App() {
         root: paths.root,
         emulatorId: id
       });
-      setActionMessage(`Émulateur lancé depuis ${result.executablePath}`);
+      setGeneralMessage(`Émulateur lancé depuis ${result.executablePath}`);
+      await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
+      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setLaunchingId(null);
     }
@@ -284,59 +344,82 @@ export default function App() {
     };
 
     await persistConfig(nextConfig);
+    setLibraryNotice({
+      type: "success",
+      message: `Connexion RomM réussie pour ${username}.`
+    });
   };
 
   const handleDownloadGame = async (game: RommGame) => {
     if (!rommSession) {
-      setActionMessage("Connexion RomM requise.");
-      return;
-    }
-
-    if (selectedEmulatorId !== "dolphin") {
-      setActionMessage("Pour l'instant, le téléchargement/lancement rapide vise Dolphin.");
+      setLibraryNotice({
+        type: "error",
+        message: "Connexion RomM requise."
+      });
       return;
     }
 
     const downloadUrl = resolveGameDownloadUrl(rommSession, game);
+
     if (!downloadUrl) {
-      setActionMessage("URL de téléchargement RomM introuvable pour ce jeu.");
+      setLibraryNotice({
+        type: "error",
+        message: `Impossible de résoudre l'URL de téléchargement pour "${game.name}".`
+      });
       return;
     }
 
-    const targetFileName = game.file_name || `${game.name}.iso`;
+    const targetFileName = resolveGameLocalFileName(game);
+    const downloadId = String(game.id);
+    const relativeSubdir = resolveGameRomSubdir(game);
 
     try {
-      setDownloadingGameId(String(game.id));
+      setDownloadingGameId(downloadId);
+      setDownloadPercent(0);
+      setLibraryNotice({
+        type: "info",
+        message: `Téléchargement de "${game.name}" dans Roms/${relativeSubdir}...`
+      });
+
       const result = await invoke<DownloadResult>("download_rom_command", {
         root: paths.root,
         url: downloadUrl,
-        fileName: targetFileName
+        fileName: targetFileName,
+        bearerToken: rommSession.token,
+        downloadId,
+        expectedTotalBytes:
+          typeof game.fs_size_bytes === "number" ? game.fs_size_bytes : undefined,
+        relativeSubdir
       });
 
-      setLastDownloadedRomPath(result.filePath);
-      setActionMessage(`ROM téléchargée dans ${result.filePath}`);
+      await refreshLocalRoms(paths.root);
+      await refreshLocalSaves(paths.root);
+
+      setLibraryNotice({
+        type: "success",
+        message: `ROM téléchargée dans ${result.filePath}`
+      });
     } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
+      setLibraryNotice({
+        type: "error",
+        message: reason instanceof Error ? reason.message : String(reason)
+      });
     } finally {
       setDownloadingGameId(null);
+      setTimeout(() => setDownloadPercent(0), 500);
     }
   };
 
-  const launchLastDownloadedGame = async () => {
-    if (!selectedEmulatorId || !lastDownloadedRomPath) {
-      setActionMessage("Aucune ROM téléchargée prête à être lancée.");
-      return;
-    }
-
+  const launchSpecificRom = async (romPath: string) => {
     try {
-      const result = await invoke<GameLaunchResult>("launch_game_command", {
+      const result = await invoke<GameLaunchResult>("launch_game_auto_command", {
         root: paths.root,
-        emulatorId: selectedEmulatorId,
-        romPath: lastDownloadedRomPath
+        romPath
       });
-      setActionMessage(`Jeu lancé avec ${result.emulatorId} : ${result.romPath}`);
+      setGeneralMessage(`Jeu lancé avec ${result.emulatorId} : ${result.romPath}`);
+      await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setActionMessage(reason instanceof Error ? reason.message : String(reason));
+      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
@@ -400,32 +483,16 @@ export default function App() {
       </aside>
 
       <main className="content">
-        <section className="panel hero-panel">
-          <p className="eyebrow">Configuration portable</p>
-          <h2>Dossiers racine</h2>
-          <div className="path-grid">
-            <PathCard label="Root" value={paths.root} />
-            <PathCard label="Emu" value={paths.emu} />
-            <PathCard label="Roms" value={paths.roms} />
-            <PathCard label="Saves" value={paths.saves} />
-            <PathCard label="Firmware" value={paths.firmware} />
-            <PathCard label="Config" value={paths.config} />
-            <PathCard label="Data" value={paths.data} />
-          </div>
-        </section>
-
-        <section className="panel">
-          <p className="eyebrow">Émulateur sélectionné</p>
-          <h2>{selectedEmulator?.name ?? "Aucun émulateur"}</h2>
+        <CollapsiblePanel eyebrow="Émulateur sélectionné" title={selectedEmulator?.name ?? "Aucun émulateur"}>
           {selectedEmulator ? (
             <div className="selected-emulator-grid">
               <StatusCard label="Plateforme" value={selectedEmulator.platformLabel} />
-              <StatusCard label="Statut" value={selectedEmulator.status} />
-              <StatusCard label="Version" value={selectedEmulator.version ?? "inconnue"} />
+              <StatusCard label="Version" value={selectedEmulator.version ?? selectedEmulator.catalogVersion ?? "Inconnue"} />
             </div>
           ) : (
-            <p className="muted">Installe Dolphin pour commencer les tests réels.</p>
+            <p className="muted">Installe un émulateur pour commencer.</p>
           )}
+
           <div className="selected-actions">
             <button
               className="primary-button"
@@ -445,29 +512,10 @@ export default function App() {
                 ? "Configuration..."
                 : "Configurer l'émulateur"}
             </button>
-            <button
-              className="primary-button compact-button"
-              disabled={!selectedEmulator || !lastDownloadedRomPath}
-              onClick={() => void launchLastDownloadedGame()}
-            >
-              Lancer la dernière ROM
-            </button>
           </div>
-          {lastDownloadedRomPath && <p className="muted last-rom">Dernière ROM : {lastDownloadedRomPath}</p>}
-        </section>
 
-        <ControllerMappingPanel
-          selectedEmulator={selectedEmulator}
-          profiles={controllerProfiles}
-          onSaveProfile={saveControllerProfile}
-        />
-        {applyingProfileId && (
-          <section className="panel">
-            <p className="eyebrow">Manette</p>
-            <h2>Application du profil</h2>
-            <p className="muted">Écriture du profil {applyingProfileId} dans la configuration Dolphin...</p>
-          </section>
-        )}
+          {generalMessage && <div className="inline-notice inline-notice-info top-gap">{generalMessage}</div>}
+        </CollapsiblePanel>
 
         <RommConnectionCard
           defaultBaseUrl={config.romm?.baseUrl}
@@ -477,24 +525,14 @@ export default function App() {
 
         <LibraryPanel
           session={rommSession}
+          localRoms={localRoms}
           onDownloadGame={handleDownloadGame}
+          onLaunchLocalRom={launchSpecificRom}
           downloadingGameId={downloadingGameId}
+          downloadPercent={downloadPercent}
+          notice={libraryNotice}
         />
 
-        <section className="panel">
-          <p className="eyebrow">État</p>
-          <h2>Statut actuel</h2>
-          <div className="status-grid">
-            <StatusCard
-              label="RomM"
-              value={rommSession ? "Connecté" : config.romm ? "Config enregistré" : "Non configuré"}
-            />
-            <StatusCard label="Émulateurs" value={`${installedCount} installés`} />
-            <StatusCard label="Profils manette" value={`${controllerProfiles.length} enregistrés`} />
-            <StatusCard label="Mode" value="Portable" />
-          </div>
-          {actionMessage && <p className="form-message success-message status-message">{actionMessage}</p>}
-        </section>
       </main>
 
       {showPicker && (
@@ -532,9 +570,7 @@ export default function App() {
                         ? "Installation..."
                         : isInstalled
                           ? "Retirer"
-                          : emu.id === "dolphin"
-                            ? "Installer"
-                            : "Bientôt"}
+                          : "Installer"}
                     </button>
                   </div>
                 );
@@ -543,20 +579,6 @@ export default function App() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-interface PathCardProps {
-  label: string;
-  value: string;
-}
-
-function PathCard({ label, value }: PathCardProps) {
-  return (
-    <div className="path-card">
-      <small>{label}</small>
-      <code>{value}</code>
     </div>
   );
 }
