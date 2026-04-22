@@ -210,7 +210,7 @@ export default function LibraryPanel({
                 {item.downloaded && item.localPath ? (
                   <button
                     className="primary-button compact-button"
-                    onClick={() => void onLaunchLocalRom(item.localPath)}
+                    onClick={() => void onLaunchLocalRom(item.localPath!)}
                   >
                     Launch
                   </button>
