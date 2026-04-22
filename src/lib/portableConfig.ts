@@ -1,25 +1,23 @@
-import type { LibraryPaths } from "../types";
+export interface PortablePathsShape {
+  root: string;
+  emu: string;
+  roms: string;
+  saves: string;
+  firmware: string;
+}
 
 export interface PortableConfig {
-  paths: LibraryPaths;
-  romm?: {
-    baseUrl: string;
-    username: string;
-  };
+  paths: PortablePathsShape;
 }
 
-export function buildPortablePaths(root: string): LibraryPaths {
-  const cleanRoot = root.replace(/[\\/]+$/, "");
+export function buildPortablePaths(root: string): PortablePathsShape {
+  const normalizedRoot = root.replace(/[\\/]+$/, "");
 
   return {
-    root: cleanRoot,
-    emu: `${cleanRoot}\\Emu`,
-    roms: `${cleanRoot}\\Roms`,
-    saves: `${cleanRoot}\\Saves`,
-    firmware: `${cleanRoot}\\Firmware`
+    root: normalizedRoot,
+    emu: `${normalizedRoot}\\Emu`,
+    roms: `${normalizedRoot}\\Roms`,
+    saves: `${normalizedRoot}\\Saves`,
+    firmware: `${normalizedRoot}\\Firmware`
   };
 }
-
-export const defaultPortableConfig: PortableConfig = {
-  paths: buildPortablePaths("C:\\Users\\Tilio\\Documents\\EmuManager")
-};

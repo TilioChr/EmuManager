@@ -39,7 +39,7 @@ export default function LibraryPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [platformFilter, setPlatformFilter] = useState("Toutes");
+  const [platformFilter, setPlatformFilter] = useState("All");
 
   useEffect(() => {
     if (!session) {
@@ -63,7 +63,7 @@ export default function LibraryPanel({
       return {
         id: `remote-${game.id}`,
         title: game.name,
-        platform: game.platform_name ?? game.platform_display_name ?? "Plateforme inconnue",
+        platform: game.platform_name ?? game.platform_display_name ?? "Unknown platform",
         fileName,
         downloaded: Boolean(localMatch),
         localPath: localMatch?.filePath,
@@ -89,22 +89,22 @@ export default function LibraryPanel({
         return left.downloaded ? -1 : 1;
       }
 
-      const platformCompare = left.platform.localeCompare(right.platform, "fr", {
+      const platformCompare = left.platform.localeCompare(right.platform, "en", {
         sensitivity: "base"
       });
       if (platformCompare !== 0) {
         return platformCompare;
       }
 
-      return left.title.localeCompare(right.title, "fr", { sensitivity: "base" });
+      return left.title.localeCompare(right.title, "en", { sensitivity: "base" });
     });
   }, [games, localByFileName, localRoms]);
 
   const platformOptions = useMemo(() => {
     const unique = Array.from(new Set(mergedItems.map((item) => item.platform))).sort((a, b) =>
-      a.localeCompare(b, "fr", { sensitivity: "base" })
+      a.localeCompare(b, "en", { sensitivity: "base" })
     );
-    return ["Toutes", ...unique];
+    return ["All", ...unique];
   }, [mergedItems]);
 
   const filteredItems = useMemo(() => {
@@ -117,7 +117,7 @@ export default function LibraryPanel({
           value.toLowerCase().includes(needle)
         );
 
-      const matchesPlatform = platformFilter === "Toutes" || item.platform === platformFilter;
+      const matchesPlatform = platformFilter === "All" || item.platform === platformFilter;
 
       return matchesSearch && matchesPlatform;
     });
@@ -125,7 +125,7 @@ export default function LibraryPanel({
 
   const loadGames = async () => {
     if (!session) {
-      setError("Mode hors ligne : seules les ROMs déjà téléchargées sont affichées.");
+      setError("Offline mode: only already downloaded ROMs are available.");
       return;
     }
 
@@ -135,7 +135,7 @@ export default function LibraryPanel({
       const roms = await getRommGames(session);
       setGames(roms);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Chargement RomM impossible.");
+      setError(reason instanceof Error ? reason.message : "Failed to load RomM library.");
     } finally {
       setLoading(false);
     }
@@ -143,15 +143,14 @@ export default function LibraryPanel({
 
   return (
     <CollapsiblePanel
-      eyebrow="Bibliothèque"
-      title="Jeux"
+      eyebrow="Library"
       actions={
         <button
           className="primary-button compact-button"
           onClick={() => void loadGames()}
           disabled={loading || !session}
         >
-          {loading ? "Chargement..." : session ? "Charger RomM" : "Hors ligne"}
+          {loading ? "Loading..." : session ? "Load RomM" : "Offline"}
         </button>
       }
     >
@@ -159,7 +158,7 @@ export default function LibraryPanel({
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Rechercher un jeu..."
+          placeholder="Search a game..."
           disabled={!mergedItems.length}
         />
 
@@ -176,7 +175,7 @@ export default function LibraryPanel({
         </select>
       </div>
 
-      {notice && (
+      {notice ? (
         <div
           className={`inline-notice ${
             notice.type === "error"
@@ -188,9 +187,9 @@ export default function LibraryPanel({
         >
           {notice.message}
         </div>
-      )}
+      ) : null}
 
-      {error && <p className="form-message error-message">{error}</p>}
+      {error ? <p className="form-message error-message">{error}</p> : null}
 
       <div className="library-list">
         {filteredItems.map((item) => {
@@ -202,26 +201,26 @@ export default function LibraryPanel({
                 <strong>{item.title}</strong>
                 <p>
                   {item.platform}
-                  {item.downloaded ? " • téléchargé" : ""}
+                  {item.downloaded ? " • downloaded" : ""}
                 </p>
                 <small>{item.fileName}</small>
               </div>
 
               <div className="library-actions">
-                {item.downloaded && item.localPath && (
+                {item.downloaded && item.localPath ? (
                   <button
                     className="primary-button compact-button"
-                    onClick={() => void onLaunchLocalRom(item.localPath)}
+                    onClick={() => void onLaunchLocalRom(item.localPath!)}
                   >
-                    Lancer
+                    Launch
                   </button>
-                )}
+                ) : null}
 
-                {!item.downloaded && item.remoteGame && (
+                {!item.downloaded && item.remoteGame ? (
                   <button
-                    className={`download-button ${isDownloading ? "download-button-loading" : ""}`}
+                    className="download-button"
                     disabled={isDownloading}
-                    onClick={() => void onDownloadGame(item.remoteGame)}
+                    onClick={() => void onDownloadGame(item.remoteGame!)}
                     style={
                       isDownloading
                         ? {
@@ -238,22 +237,21 @@ export default function LibraryPanel({
                   >
                     <span className="download-button-label">
                       {isDownloading
-                        ? `Téléchargement... ${Math.round(downloadPercent)}%`
-                        : "Télécharger"}
+                        ? `Downloading... ${Math.round(downloadPercent)}%`
+                        : "Download"}
                     </span>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           );
         })}
 
-        {!loading && !filteredItems.length && (
+        {!loading && !filteredItems.length ? (
           <div className="empty-state">
-            <p>Aucun jeu affiché</p>
-            <small>Les ROMs locales restent visibles même hors ligne.</small>
+            <p>No games displayed</p>
           </div>
-        )}
+        ) : null}
       </div>
     </CollapsiblePanel>
   );

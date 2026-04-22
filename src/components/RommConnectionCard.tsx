@@ -51,7 +51,7 @@ export default function RommConnectionCard({
           <input
             value={baseUrl}
             onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://romm.example.com"
+            placeholder="192.168.1.47:8085"
             required
           />
         </label>
@@ -61,7 +61,7 @@ export default function RommConnectionCard({
           <input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
-            placeholder="tilio"
+            placeholder="John Doe"
             required
           />
         </label>
