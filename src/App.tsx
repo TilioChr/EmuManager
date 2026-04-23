@@ -8,6 +8,7 @@ import {
   resolveGameDownloadUrl,
   resolveGameLocalFileName,
   resolveGameRomSubdir,
+  type RommLaunchSession,
   type RommGame,
   type RommSession
 } from "./lib/romm";
@@ -22,7 +23,8 @@ import type {
   LaunchResult,
   LocalRomEntry,
   LocalSaveEntry,
-  PortablePaths
+  PortablePaths,
+  SaveSyncStatus
 } from "./types";
 
 const fallbackPaths = buildPortablePaths(".");
@@ -50,6 +52,7 @@ export default function App() {
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
   const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
   const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
+  const [saveSyncStatuses, setSaveSyncStatuses] = useState<Record<string, SaveSyncStatus>>({});
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -69,9 +72,22 @@ export default function App() {
   const [downloadingGameId, setDownloadingGameId] = useState<string | null>(null);
   const [downloadPercent, setDownloadPercent] = useState(0);
 
+  const refreshSaveSyncStatuses = async (root: string, roms: LocalRomEntry[]) => {
+    const statuses = await invoke<SaveSyncStatus[]>("get_save_sync_statuses_command", {
+      root,
+      romPaths: roms.map((entry) => entry.filePath)
+    });
+
+    setSaveSyncStatuses(
+      Object.fromEntries(statuses.map((entry) => [entry.romPath, entry]))
+    );
+  };
+
   const refreshLocalRoms = async (root: string) => {
     const roms = await invoke<LocalRomEntry[]>("list_local_roms_command", { root });
     setLocalRoms(roms);
+    await refreshSaveSyncStatuses(root, roms);
+    return roms;
   };
 
   const refreshLocalSaves = async (root: string) => {
@@ -390,6 +406,14 @@ export default function App() {
         relativeSubdir
       });
 
+      await invoke("register_romm_rom_command", {
+        root: paths.root,
+        romPath: result.filePath,
+        rommId: String(game.id),
+        platformName: game.platform_name ?? game.platform_display_name ?? null,
+        fileName: targetFileName
+      });
+
       await refreshLocalRoms(paths.root);
       await refreshLocalSaves(paths.root);
 
@@ -412,9 +436,17 @@ export default function App() {
     try {
       const result = await invoke<GameLaunchResult>("launch_game_auto_command", {
         root: paths.root,
-        romPath
+        romPath,
+        rommSession: rommSession
+          ? ({
+              baseUrl: rommSession.baseUrl,
+              token: rommSession.token
+            } satisfies RommLaunchSession)
+          : null
       });
-      setGeneralMessage(`Game launched with ${result.emulatorId}: ${result.romPath}`);
+      setGeneralMessage(`Session ${result.emulatorId} terminée et synchronisée pour ${result.romPath}`);
+      await refreshLocalRoms(paths.root);
+      await refreshLocalSaves(paths.root);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
       setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
@@ -516,6 +548,7 @@ export default function App() {
         <LibraryPanel
           session={rommSession}
           localRoms={localRoms}
+          saveSyncStatuses={saveSyncStatuses}
           onDownloadGame={handleDownloadGame}
           onLaunchLocalRom={launchSpecificRom}
           downloadingGameId={downloadingGameId}

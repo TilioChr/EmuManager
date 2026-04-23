@@ -12,19 +12,20 @@ mod platform_router;
 mod portable_paths;
 mod process_launcher;
 mod rom_downloader;
+mod romm_sync;
 
 use config_store::{load_config, save_config, AppConfig};
-use dolphin_controller_writer::ControllerWriteResult;
 use emulator_configurator::ConfigureResult;
 use emulator_installer::{
     get_installed_emulator_version, install_emulator, is_emulator_installed, InstallResult,
 };
 use emulator_registry::{built_in_emulators, EmulatorDefinition};
-use game_launcher::{launch_game, launch_game_auto, GameLaunchResult};
+use game_launcher::{launch_game, launch_game_auto_with_session, GameLaunchResult};
 use local_library::{list_local_roms, list_local_saves, LocalRomEntry, LocalSaveEntry};
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult};
+use romm_sync::{get_save_sync_statuses, register_rom_mapping, RommLaunchSession, SaveSyncStatus};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -148,24 +149,49 @@ async fn download_rom_command(
 }
 
 #[tauri::command]
+fn register_romm_rom_command(
+    root: Option<String>,
+    rom_path: String,
+    romm_id: String,
+    platform_name: Option<String>,
+    file_name: Option<String>,
+) -> Result<(), String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    register_rom_mapping(&paths, &rom_path, &romm_id, platform_name.as_deref(), file_name.as_deref())
+}
+
+#[tauri::command]
+fn get_save_sync_statuses_command(
+    root: Option<String>,
+    rom_paths: Vec<String>,
+) -> Result<Vec<SaveSyncStatus>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    get_save_sync_statuses(&paths, &rom_paths)
+}
+
+#[tauri::command]
 fn launch_game_command(
     root: Option<String>,
     emulator_id: String,
     rom_path: String,
+    romm_session: Option<RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    launch_game(&paths, &emulator_id, &rom_path)
+    launch_game(&paths, &emulator_id, &rom_path, romm_session.as_ref())
 }
 
 #[tauri::command]
 fn launch_game_auto_command(
     root: Option<String>,
     rom_path: String,
+    romm_session: Option<RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    launch_game_auto(&paths, &rom_path)
+    launch_game_auto_with_session(&paths, &rom_path, romm_session.as_ref())
 }
 
 fn main() {
@@ -183,6 +209,8 @@ fn main() {
             configure_emulator_command,
             launch_emulator_command,
             download_rom_command,
+            register_romm_rom_command,
+            get_save_sync_statuses_command,
             launch_game_command,
             launch_game_auto_command
         ])
