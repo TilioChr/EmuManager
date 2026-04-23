@@ -400,6 +400,8 @@ function resolveSlotName(emulatorId: string): string | null {
       return "EmuManager Azahar";
     case "eden":
       return "EmuManager Eden";
+    case "pcsx2":
+      return "EmuManager PCSX2";
     default:
       return null;
   }

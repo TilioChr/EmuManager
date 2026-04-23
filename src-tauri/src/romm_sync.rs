@@ -19,6 +19,7 @@ const DOLPHIN_SLOT_NAME: &str = "EmuManager Dolphin";
 const MELONDS_SLOT_NAME: &str = "EmuManager melonDS";
 const AZAHAR_SLOT_NAME: &str = "EmuManager Azahar";
 const EDEN_SLOT_NAME: &str = "EmuManager Eden";
+const PCSX2_SLOT_NAME: &str = "EmuManager PCSX2";
 const MAX_REMOTE_SAVES: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +163,7 @@ pub fn get_save_sync_statuses(
                 "melonds" => latest_melonds_save_timestamp_ms(Path::new(rom_path)).ok().flatten(),
                 "azahar" => latest_azahar_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
                 "eden" => latest_eden_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
+                "pcsx2" => latest_pcsx2_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
                 _ => None,
             };
 
@@ -605,6 +607,127 @@ pub fn launch_eden(
 
     Ok(crate::game_launcher::GameLaunchResult {
         emulator_id: "eden".to_string(),
+        executable_path: executable_path.to_string_lossy().to_string(),
+        rom_path: rom_path.to_string_lossy().to_string(),
+        launched: true,
+    })
+}
+
+pub fn launch_pcsx2(
+    paths: &PortablePaths,
+    executable_path: &Path,
+    rom_path: &Path,
+    session: Option<&RommLaunchSession>,
+) -> Result<crate::game_launcher::GameLaunchResult, String> {
+    log_sync(
+        paths,
+        &format!(
+            "launch_pcsx2 rom_path={} mode={}",
+            rom_path.to_string_lossy(),
+            if session.is_some() { "online" } else { "offline" }
+        ),
+    );
+
+    let mut mapping = load_rom_index(paths)?
+        .entries
+        .into_iter()
+        .find(|entry| Path::new(&entry.rom_path) == rom_path);
+
+    if mapping.is_none() {
+        if let Some(active_session) = session {
+            log_sync(
+                paths,
+                &format!(
+                    "no direct romm mapping found for {}, trying filename lookup",
+                    rom_path.to_string_lossy()
+                ),
+            );
+
+            mapping = resolve_mapping_from_remote(paths, active_session, rom_path)?;
+        }
+    }
+
+    let profile_root = pcsx2_profile_root(paths, rom_path)?;
+    let has_existing_local_save = latest_pcsx2_save_timestamp_ms(paths, rom_path)?.is_some();
+
+    if mapping.is_none() && !has_existing_local_save {
+        log_sync(
+            paths,
+            &format!(
+                "no mapping and no local pcsx2 save for {}, fallback to plain pcsx2 launch",
+                rom_path.to_string_lossy()
+            ),
+        );
+
+        let working_directory = executable_path
+            .parent()
+            .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail PCSX2".to_string())?
+            .to_path_buf();
+
+        let status = Command::new(executable_path)
+            .current_dir(&working_directory)
+            .arg("-batch")
+            .arg("--")
+            .arg(rom_path)
+            .status()
+            .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
+
+        if !status.success() {
+            return Err(format!("PCSX2 s'est fermÃ© avec le code {:?}", status.code()));
+        }
+
+        return Ok(crate::game_launcher::GameLaunchResult {
+            emulator_id: "pcsx2".to_string(),
+            executable_path: executable_path.to_string_lossy().to_string(),
+            rom_path: rom_path.to_string_lossy().to_string(),
+            launched: true,
+        });
+    }
+
+    seed_pcsx2_profile_from_base(paths, &profile_root)?;
+
+    if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
+        maybe_restore_latest_pcsx2_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
+    } else {
+        log_sync(paths, "launching PCSX2 with local profile only");
+    }
+
+    let working_directory = executable_path
+        .parent()
+        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail PCSX2".to_string())?
+        .to_path_buf();
+    let portable_ini = working_directory.join("portable.ini");
+
+    ensure_pcsx2_portable_mode(&portable_ini)?;
+    materialize_pcsx2_portable_profile(paths, &profile_root, &working_directory)?;
+
+    let status = Command::new(executable_path)
+        .current_dir(&working_directory)
+        .arg("-batch")
+        .arg("--")
+        .arg(rom_path)
+        .status()
+        .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
+
+    log_sync(
+        paths,
+        &format!("pcsx2 exited success={} code={:?}", status.success(), status.code()),
+    );
+
+    sync_pcsx2_portable_profile_back(paths, &working_directory, &profile_root)?;
+
+    if !status.success() {
+        return Err(format!("PCSX2 s'est fermÃ© avec le code {:?}", status.code()));
+    }
+
+    if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
+        upload_pcsx2_save_bundle(paths, active_session, current_mapping, rom_path, &profile_root)?;
+    } else {
+        log_sync(paths, "skip PCSX2 remote upload because no active RomM session or no mapping");
+    }
+
+    Ok(crate::game_launcher::GameLaunchResult {
+        emulator_id: "pcsx2".to_string(),
         executable_path: executable_path.to_string_lossy().to_string(),
         rom_path: rom_path.to_string_lossy().to_string(),
         launched: true,
@@ -1231,12 +1354,11 @@ fn maybe_restore_latest_eden_save(
 
     download_file(paths, session, &download_url, &archive_path)?;
 
-    if profile_root.exists() {
-        fs::remove_dir_all(profile_root)
-            .map_err(|error| format!("Impossible de rÃ©initialiser le profil Eden: {}", error))?;
-    }
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de recrÃ©er le profil Eden: {}", error))?;
+        .map_err(|error| format!("Impossible de prÃ©parer le profil Eden: {}", error))?;
+    for path in eden_sync_paths(profile_root) {
+        remove_path_if_exists(&path)?;
+    }
 
     extract_zip_archive(&archive_path, profile_root)?;
     let _ = fs::remove_file(&archive_path);
@@ -1269,8 +1391,14 @@ fn upload_eden_save_bundle(
         return Ok(());
     }
 
+    let sync_paths = eden_sync_paths(profile_root);
+    if !sync_paths.iter().any(|path| path.exists()) {
+        log_sync(paths, "Eden upload skipped because no selected save paths were found");
+        return Ok(());
+    }
+
     let archive_path = profile_root.join("emumanager-eden-sync.zip");
-    create_zip_archive(profile_root, &archive_path)?;
+    create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
 
     let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
         .map_err(|error| format!("URL RomM invalide: {}", error))?;
@@ -1341,6 +1469,194 @@ fn upload_eden_save_bundle(
     )?;
 
     cleanup_old_remote_saves(paths, session, &mapping.romm_id, "eden", EDEN_SLOT_NAME)?;
+    Ok(())
+}
+
+fn maybe_restore_latest_pcsx2_save(
+    paths: &PortablePaths,
+    session: &RommLaunchSession,
+    mapping: &RommRomMapping,
+    rom_path: &Path,
+    profile_root: &Path,
+) -> Result<(), String> {
+    log_sync(paths, &format!("restore_latest_pcsx2_save romm_id={}", mapping.romm_id));
+
+    let local_timestamp = latest_pcsx2_save_timestamp_ms(paths, rom_path)?;
+
+    if let (Some(current_local), Some(last_synced_local)) =
+        (local_timestamp, mapping.last_synced_local_save_at_ms)
+    {
+        if current_local > last_synced_local {
+            log_sync(
+                paths,
+                &format!(
+                    "skipping PCSX2 remote restore because local save is newer than last synced local copy current={} last_synced={}",
+                    current_local, last_synced_local
+                ),
+            );
+            return Ok(());
+        }
+    }
+
+    let latest_save = fetch_emumanager_saves(
+        paths,
+        session,
+        &mapping.romm_id,
+        "pcsx2",
+        PCSX2_SLOT_NAME,
+    )?
+    .into_iter()
+    .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+
+    let Some(save) = latest_save else {
+        log_sync(paths, "no remote PCSX2 save bundle found");
+        return Ok(());
+    };
+
+    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
+        log_sync(paths, "PCSX2 remote save timestamp matches last known sync, keeping local profile");
+        return Ok(());
+    }
+
+    log_sync(
+        paths,
+        &format!(
+            "selected remote PCSX2 save save_id={} file_name={:?} slot={:?} updated_at={:?}",
+            save.id.as_string(),
+            save.file_name,
+            save.slot,
+            save.updated_at
+        ),
+    );
+
+    let archive_name = save
+        .file_name
+        .clone()
+        .unwrap_or_else(|| "pcsx2-sync.zip".to_string());
+    let download_url = format!(
+        "{}/api/saves/{}/content",
+        session.base_url.trim_end_matches('/'),
+        save.id.as_string()
+    );
+    let archive_path = profile_root.join(&archive_name);
+
+    download_file(paths, session, &download_url, &archive_path)?;
+
+    fs::create_dir_all(profile_root)
+        .map_err(|error| format!("Impossible de prÃ©parer le profil PCSX2: {}", error))?;
+    for path in pcsx2_sync_paths(profile_root) {
+        remove_path_if_exists(&path)?;
+    }
+
+    extract_zip_archive(&archive_path, profile_root)?;
+    let _ = fs::remove_file(&archive_path);
+
+    let latest_local_after_restore = latest_pcsx2_save_timestamp_ms(paths, rom_path)?;
+    update_mapping_sync_metadata(
+        paths,
+        &mapping.rom_path,
+        latest_local_after_restore,
+        save.updated_at.clone(),
+    )?;
+
+    log_sync(
+        paths,
+        &format!("PCSX2 remote save extracted into {}", profile_root.to_string_lossy()),
+    );
+
+    Ok(())
+}
+
+fn upload_pcsx2_save_bundle(
+    paths: &PortablePaths,
+    session: &RommLaunchSession,
+    mapping: &RommRomMapping,
+    rom_path: &Path,
+    profile_root: &Path,
+) -> Result<(), String> {
+    if !profile_root.exists() {
+        log_sync(paths, "PCSX2 upload skipped because profile directory does not exist");
+        return Ok(());
+    }
+
+    let sync_paths = pcsx2_sync_paths(profile_root);
+    if !sync_paths.iter().any(|path| path.exists()) {
+        log_sync(paths, "PCSX2 upload skipped because no selected save paths were found");
+        return Ok(());
+    }
+
+    let archive_path = profile_root.join("emumanager-pcsx2-sync.zip");
+    create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
+
+    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
+        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    url.query_pairs_mut()
+        .append_pair("rom_id", &mapping.romm_id)
+        .append_pair("emulator", "pcsx2")
+        .append_pair("slot", PCSX2_SLOT_NAME)
+        .append_pair("overwrite", "true");
+
+    let bytes = fs::read(&archive_path)
+        .map_err(|error| format!("Impossible de lire l'archive de save PCSX2: {}", error))?;
+
+    let file_name = format!("emumanager-pcsx2-{}.zip", sanitize_file_stem(rom_path));
+    log_sync(
+        paths,
+        &format!(
+            "uploading PCSX2 save bundle romm_id={} file_name={} archive={} bytes={}",
+            mapping.romm_id,
+            file_name,
+            archive_path.to_string_lossy(),
+            bytes.len()
+        ),
+    );
+
+    let boundary = format!("emumanager-{:016x}", compute_hash(&file_name));
+    let body = build_multipart_body(&boundary, "saveFile", &file_name, "application/zip", &bytes);
+
+    let response = block_on(async {
+        let client = build_http_client()?;
+        client
+            .post(url)
+            .bearer_auth(&session.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={}", boundary),
+            )
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| format!("Upload RomM impossible: {}", error))
+    })?;
+
+    let status = response.status();
+    let response_body = block_on(async {
+        response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable body>".to_string())
+    });
+
+    log_sync(
+        paths,
+        &format!("PCSX2 upload response status={} body={}", status, response_body),
+    );
+
+    if !status.is_success() {
+        return Err(format!("Upload RomM PCSX2 Ã©chouÃ© avec le statut {}: {}", status, response_body));
+    }
+
+    let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
+    let latest_local_timestamp = latest_pcsx2_save_timestamp_ms(paths, rom_path)?;
+
+    update_mapping_sync_metadata(
+        paths,
+        &mapping.rom_path,
+        latest_local_timestamp,
+        uploaded_save.and_then(|save| save.updated_at),
+    )?;
+
+    cleanup_old_remote_saves(paths, session, &mapping.romm_id, "pcsx2", PCSX2_SLOT_NAME)?;
     Ok(())
 }
 
@@ -1781,6 +2097,25 @@ fn eden_profile_root(paths: &PortablePaths, rom_path: &Path) -> Result<PathBuf, 
     )))
 }
 
+fn pcsx2_profile_root(paths: &PortablePaths, rom_path: &Path) -> Result<PathBuf, String> {
+    let roms_root = Path::new(&paths.roms);
+    let relative = rom_path
+        .strip_prefix(roms_root)
+        .unwrap_or(rom_path)
+        .to_string_lossy()
+        .to_string();
+
+    let mut hasher = DefaultHasher::new();
+    relative.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    Ok(Path::new(&paths.data).join("PCSX2Profiles").join(format!(
+        "{}-{:016x}",
+        sanitize_path_fragment(&relative),
+        hash
+    )))
+}
+
 fn collect_melonds_save_files(rom_path: &Path) -> Result<Vec<PathBuf>, String> {
     let Some(parent) = rom_path.parent() else {
         return Ok(Vec::new());
@@ -1866,17 +2201,16 @@ fn latest_eden_save_timestamp_ms(
     let profile_root = eden_profile_root(paths, rom_path)?;
     let mut latest: Option<u64> = None;
 
-    for directory in [
-        profile_root.join("nand"),
-        profile_root.join("sdmc"),
-        profile_root.join("amiibo"),
-        profile_root.join("keys"),
-        profile_root.join("load"),
-        profile_root.join("play_time"),
-        profile_root.join("config").join("custom"),
-    ] {
-        if directory.exists() {
-            let candidate = latest_modified_in_dir(&directory)?;
+    for path in eden_sync_paths(&profile_root) {
+        if path.exists() {
+            let candidate = if path.is_dir() {
+                latest_modified_in_dir(&path)?
+            } else {
+                fs::metadata(&path)
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(system_time_to_epoch_ms)
+            };
             latest = match (latest, candidate) {
                 (Some(left), Some(right)) => Some(left.max(right)),
                 (Some(left), None) => Some(left),
@@ -1887,6 +2221,51 @@ fn latest_eden_save_timestamp_ms(
     }
 
     Ok(latest)
+}
+
+fn latest_pcsx2_save_timestamp_ms(
+    paths: &PortablePaths,
+    rom_path: &Path,
+) -> Result<Option<u64>, String> {
+    let profile_root = pcsx2_profile_root(paths, rom_path)?;
+    let mut latest: Option<u64> = None;
+
+    for path in pcsx2_sync_paths(&profile_root) {
+        if path.exists() {
+            let candidate = if path.is_dir() {
+                latest_modified_in_dir(&path)?
+            } else {
+                fs::metadata(&path)
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(system_time_to_epoch_ms)
+            };
+            latest = match (latest, candidate) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+        }
+    }
+
+    Ok(latest)
+}
+
+fn pcsx2_sync_paths(profile_root: &Path) -> Vec<PathBuf> {
+    vec![
+        profile_root.join("memcards"),
+        profile_root.join("sstates"),
+    ]
+}
+
+fn eden_sync_paths(profile_root: &Path) -> Vec<PathBuf> {
+    vec![
+        profile_root.join("nand").join("user").join("save"),
+        profile_root.join("sdmc").join("Nintendo"),
+        profile_root.join("play_time").join("playtime.bin"),
+        profile_root.join("config").join("custom"),
+    ]
 }
 
 fn is_melonds_save_file_name(candidate_name: &str, rom_file_name: &str, rom_stem: &str) -> bool {
@@ -2183,6 +2562,113 @@ fn sync_eden_portable_user_back(
     Ok(())
 }
 
+fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> Result<(), String> {
+    if profile_root.join("memcards").exists() || profile_root.join("sstates").exists() {
+        log_sync(paths, "PCSX2 profile already seeded, keeping existing save directories");
+        return Ok(());
+    }
+
+    fs::create_dir_all(profile_root)
+        .map_err(|error| format!("Impossible de crÃ©er le profil PCSX2: {}", error))?;
+
+    let install_root = Path::new(&paths.emu).join("PCSX2");
+    for name in ["memcards", "sstates"] {
+        let source = install_root.join(name);
+        let destination = profile_root.join(name);
+        if source.exists() {
+            copy_directory_recursive(&source, &destination)?;
+        } else {
+            fs::create_dir_all(&destination)
+                .map_err(|error| format!("Impossible de crÃ©er {} pour PCSX2: {}", name, error))?;
+        }
+    }
+
+    log_sync(
+        paths,
+        &format!("seeded PCSX2 profile from {}", install_root.to_string_lossy()),
+    );
+    Ok(())
+}
+
+fn ensure_pcsx2_portable_mode(portable_ini_path: &Path) -> Result<(), String> {
+    fs::write(portable_ini_path, "")
+        .map_err(|error| format!("Impossible de crÃ©er portable.ini pour PCSX2: {}", error))
+}
+
+fn materialize_pcsx2_portable_profile(
+    paths: &PortablePaths,
+    profile_root: &Path,
+    working_directory: &Path,
+) -> Result<(), String> {
+    for path in pcsx2_sync_paths(profile_root) {
+        let relative = path.strip_prefix(profile_root).map_err(|error| {
+            format!("Chemin PCSX2 invalide dans le profil: {}", error)
+        })?;
+        let destination = working_directory.join(relative);
+        remove_path_if_exists(&destination)?;
+        if path.exists() {
+            copy_directory_recursive(&path, &destination)?;
+        } else {
+            fs::create_dir_all(&destination)
+                .map_err(|error| format!("Impossible de crÃ©er {} pour PCSX2: {}", destination.to_string_lossy(), error))?;
+        }
+    }
+
+    log_sync(
+        paths,
+        &format!(
+            "materialized PCSX2 portable profile from {} into {}",
+            profile_root.to_string_lossy(),
+            working_directory.to_string_lossy()
+        ),
+    );
+    Ok(())
+}
+
+fn sync_pcsx2_portable_profile_back(
+    paths: &PortablePaths,
+    working_directory: &Path,
+    profile_root: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(profile_root)
+        .map_err(|error| format!("Impossible de prÃ©parer le profil PCSX2: {}", error))?;
+
+    for relative in ["memcards", "sstates"] {
+        let source = working_directory.join(relative);
+        let destination = profile_root.join(relative);
+        remove_path_if_exists(&destination)?;
+        if source.exists() {
+            copy_directory_recursive(&source, &destination)?;
+        }
+    }
+
+    log_sync(
+        paths,
+        &format!(
+            "synced PCSX2 portable profile back from {} to {}",
+            working_directory.to_string_lossy(),
+            profile_root.to_string_lossy()
+        ),
+    );
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|error| format!("Impossible de supprimer {}: {}", path.to_string_lossy(), error))?;
+    } else {
+        fs::remove_file(path)
+            .map_err(|error| format!("Impossible de supprimer {}: {}", path.to_string_lossy(), error))?;
+    }
+
+    Ok(())
+}
+
 fn create_zip_archive(source_dir: &Path, archive_path: &Path) -> Result<(), String> {
     let file = fs::File::create(archive_path)
         .map_err(|error| format!("Impossible de créer l'archive de save: {}", error))?;
@@ -2235,6 +2721,81 @@ fn create_zip_archive_from_files(files: &[PathBuf], archive_path: &Path) -> Resu
     writer
         .finish()
         .map_err(|error| format!("Impossible de finaliser l'archive de save: {}", error))?;
+
+    Ok(())
+}
+
+fn create_zip_archive_from_paths(
+    source_root: &Path,
+    paths: &[PathBuf],
+    archive_path: &Path,
+) -> Result<(), String> {
+    let file = fs::File::create(archive_path)
+        .map_err(|error| format!("Impossible de crÃ©er l'archive de save: {}", error))?;
+    let mut writer = ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+
+        add_path_to_zip(&mut writer, path, source_root, options)?;
+    }
+
+    writer
+        .finish()
+        .map_err(|error| format!("Impossible de finaliser l'archive de save: {}", error))?;
+
+    Ok(())
+}
+
+fn add_path_to_zip(
+    writer: &mut ZipWriter<fs::File>,
+    path: &Path,
+    base_dir: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let name = path
+        .strip_prefix(base_dir)
+        .map_err(|error| format!("Chemin de save invalide: {}", error))?
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    if should_skip_dolphin_sync_entry(&name) {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        writer
+            .add_directory(format!("{}/", name), options)
+            .map_err(|error| format!("Impossible d'ajouter un dossier Ã  l'archive: {}", error))?;
+
+        for entry_result in fs::read_dir(path)
+            .map_err(|error| format!("Impossible de lire le dossier de save: {}", error))?
+        {
+            let entry = entry_result
+                .map_err(|error| format!("Impossible de lire une entrÃ©e de save: {}", error))?;
+            add_path_to_zip(writer, &entry.path(), base_dir, options)?;
+        }
+
+        return Ok(());
+    }
+
+    writer
+        .start_file(name, options)
+        .map_err(|error| format!("Impossible d'ajouter un fichier Ã  l'archive: {}", error))?;
+
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
+    writer
+        .write_all(&buffer)
+        .map_err(|error| format!("Impossible d'Ã©crire un fichier dans l'archive: {}", error))?;
 
     Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::platform_router::resolve_emulator_id_for_rom_path;
 use crate::portable_paths::PortablePaths;
-use crate::romm_sync::{launch_azahar, launch_dolphin, launch_eden, launch_melonds, RommLaunchSession};
+use crate::romm_sync::{launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
@@ -47,7 +47,7 @@ pub fn launch_game(
             return launch_eden(paths, &executable_path, &rom, romm_session);
         }
         "pcsx2" => {
-            command.arg("-batch").arg("--").arg(&rom);
+            return launch_pcsx2(paths, &executable_path, &rom, romm_session);
         }
         "azahar" => {
             return launch_azahar(paths, &executable_path, &rom, romm_session);
