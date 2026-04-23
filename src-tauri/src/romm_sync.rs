@@ -1,4 +1,4 @@
-use crate::emulator_configurator::configure_emulator;
+﻿use crate::emulator_configurator::configure_emulator;
 use crate::portable_paths::PortablePaths;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -805,10 +805,8 @@ fn maybe_restore_latest_remote_save(
     let archive_path = profile_root.join(&archive_name);
     download_file(paths, session, &download_url, &archive_path)?;
 
-    let profile_user_dir = profile_root.join("User");
-    if profile_user_dir.exists() {
-        fs::remove_dir_all(&profile_user_dir)
-            .map_err(|error| format!("Impossible de réinitialiser le profil Dolphin: {}", error))?;
+    for path in dolphin_sync_paths(profile_root) {
+        remove_path_if_exists(&path)?;
     }
 
     extract_zip_archive(&archive_path, profile_root)?;
@@ -829,7 +827,6 @@ fn maybe_restore_latest_remote_save(
 
     Ok(())
 }
-
 fn upload_save_bundle(
     paths: &PortablePaths,
     session: &RommLaunchSession,
@@ -844,7 +841,8 @@ fn upload_save_bundle(
     }
 
     let archive_path = profile_root.join("emumanager-dolphin-sync.zip");
-    create_zip_archive(&user_dir, &archive_path)?;
+    let sync_paths = dolphin_sync_paths(profile_root);
+    create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
 
     let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
         .map_err(|error| format!("URL RomM invalide: {}", error))?;
@@ -901,7 +899,7 @@ fn upload_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM échoué avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM Ã©chouÃ© avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -917,7 +915,6 @@ fn upload_save_bundle(
     cleanup_old_remote_saves(paths, session, &mapping.romm_id, "dolphin", DOLPHIN_SLOT_NAME)?;
     Ok(())
 }
-
 fn maybe_restore_latest_melonds_save(
     paths: &PortablePaths,
     session: &RommLaunchSession,
@@ -2016,6 +2013,14 @@ fn latest_dolphin_save_timestamp_ms(
     Ok(latest)
 }
 
+fn dolphin_sync_paths(profile_root: &Path) -> Vec<PathBuf> {
+    let user_dir = profile_root.join("User");
+    vec![
+        user_dir.join("Wii"),
+        user_dir.join("GC"),
+        user_dir.join("Config"),
+    ]
+}
 fn latest_melonds_save_timestamp_ms(rom_path: &Path) -> Result<Option<u64>, String> {
     let save_files = collect_melonds_save_files(rom_path)?;
     let mut latest: Option<u64> = None;
@@ -3195,3 +3200,4 @@ fn log_sync(paths: &PortablePaths, message: &str) {
         let _ = file.write_all(line.as_bytes());
     }
 }
+
