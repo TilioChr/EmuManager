@@ -2,6 +2,7 @@
 
 mod azahar_controller_writer;
 mod config_store;
+mod controller_profile_writer;
 mod controller_profiles;
 mod dolphin_controller_writer;
 mod eden_controller_writer;
@@ -19,8 +20,8 @@ mod rom_downloader;
 mod romm_sync;
 
 use config_store::{load_config, save_config, AppConfig};
+use controller_profile_writer::{apply_controller_profile, ControllerWriteResult};
 use controller_profiles::{load_controller_profiles, save_controller_profiles, ControllerProfile};
-use dolphin_controller_writer::{apply_controller_profile, ControllerWriteResult};
 use emulator_configurator::ConfigureResult;
 use emulator_installer::{
     get_installed_emulator_version, install_emulator, is_emulator_installed, InstallResult,
@@ -30,7 +31,7 @@ use game_launcher::{launch_game, launch_game_auto_with_session, GameLaunchResult
 use local_library::{list_local_roms, list_local_saves, LocalRomEntry, LocalSaveEntry};
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
-use rom_downloader::{download_rom_to_library, DownloadResult};
+use rom_downloader::{download_rom_to_library, DownloadResult, DownloadRomRequest};
 use romm_sync::{get_save_sync_statuses, register_rom_mapping, RommLaunchSession, SaveSyncStatus};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -113,10 +114,9 @@ fn save_controller_profile_command(
         .iter()
         .position(|entry| is_same_controller_profile(entry, &profile))
     {
-        profiles[index] = profile.clone();
-    } else {
-        profiles.push(profile.clone());
+        profiles.remove(index);
     }
+    profiles.push(profile.clone());
 
     save_controller_profiles(&paths, &profiles)?;
 
@@ -199,26 +199,11 @@ fn launch_emulator_command(
 async fn download_rom_command(
     app: tauri::AppHandle,
     root: Option<String>,
-    url: String,
-    file_name: String,
-    bearer_token: Option<String>,
-    download_id: String,
-    expected_total_bytes: Option<u64>,
-    relative_subdir: Option<String>,
+    request: DownloadRomRequest,
 ) -> Result<DownloadResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    download_rom_to_library(
-        &app,
-        &paths,
-        &url,
-        &file_name,
-        bearer_token.as_deref(),
-        &download_id,
-        expected_total_bytes,
-        relative_subdir.as_deref(),
-    )
-    .await
+    download_rom_to_library(&app, &paths, &request).await
 }
 
 #[tauri::command]

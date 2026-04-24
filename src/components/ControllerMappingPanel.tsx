@@ -559,11 +559,23 @@ export default function ControllerMappingPanel({
       setProfileName(matchingProfile.name);
       setDolphinSettings(matchingProfile.dolphinSettings ?? defaultDolphinSettings);
       setBindings(mergeBindingsForController(selectedController, matchingProfile.bindings));
+    } else {
+      setProfileName(`${selectedEmulator.name} - ${selectedController.label}`);
+      setDolphinSettings(defaultDolphinSettings);
+      setBindings(createBindings(selectedController));
     }
+    setListeningInputId(null);
+    setMessage(null);
   };
 
   const startListening = (inputId: string) => {
     const device = selectedPhysicalDeviceRef.current;
+    if (device.type === "saved") {
+      setListeningInputId(null);
+      setMessage("Rebranche cette manette puis relance un scan pour modifier ce profil.");
+      return;
+    }
+
     baselineSignalsRef.current =
       device.type === "gamepad" ? new Set(readGamepadSignals(device)) : new Set();
     setListeningInputId(inputId);
@@ -613,7 +625,7 @@ export default function ControllerMappingPanel({
         physicalDeviceLabel: selectedPhysicalDevice.label,
         emulatedControllerId: selectedController.id,
         emulatedDeviceLabel: selectedController.label,
-        dolphinSettings,
+        dolphinSettings: selectedEmulator.id === "dolphin" ? dolphinSettings : undefined,
         bindings
       };
 

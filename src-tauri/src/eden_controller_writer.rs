@@ -1,5 +1,5 @@
+use crate::controller_profile_writer::ControllerWriteResult;
 use crate::controller_profiles::ControllerProfile;
-use crate::dolphin_controller_writer::ControllerWriteResult;
 use crate::portable_paths::PortablePaths;
 use std::fmt::Write as _;
 use std::fs;
@@ -389,12 +389,11 @@ fn eden_analog_param(
     analog: &EdenAnalog,
     sdl_target: Option<&EdenSdlTarget>,
 ) -> Option<String> {
-    if !is_keyboard_profile(profile)
-        && analog_matches_native_stick(profile, analog)
-        && sdl_target.is_some()
+    if let Some(target) = sdl_target
+        .filter(|_| !is_keyboard_profile(profile) && analog_matches_native_stick(profile, analog))
     {
         return Some(gamepad_analog_param(
-            sdl_target.unwrap(),
+            target,
             analog.native_axis_x,
             analog.native_axis_y,
         ));

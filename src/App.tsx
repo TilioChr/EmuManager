@@ -418,13 +418,15 @@ export default function App() {
 
       const result = await invoke<DownloadResult>("download_rom_command", {
         root: paths.root,
-        url: downloadUrl,
-        fileName: targetFileName,
-        bearerToken: rommSession.token,
-        downloadId,
-        expectedTotalBytes:
-          typeof game.fs_size_bytes === "number" ? game.fs_size_bytes : undefined,
-        relativeSubdir
+        request: {
+          url: downloadUrl,
+          fileName: targetFileName,
+          bearerToken: rommSession.token,
+          downloadId,
+          expectedTotalBytes:
+            typeof game.fs_size_bytes === "number" ? game.fs_size_bytes : undefined,
+          relativeSubdir
+        }
       });
 
       await invoke("register_romm_rom_command", {

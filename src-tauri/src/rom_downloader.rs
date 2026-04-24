@@ -1,7 +1,7 @@
 use crate::portable_paths::PortablePaths;
 use futures_util::StreamExt;
 use reqwest::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use tauri::{AppHandle, Emitter};
@@ -25,33 +25,39 @@ pub struct DownloadProgressPayload {
     pub percent: f64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadRomRequest {
+    pub url: String,
+    pub file_name: String,
+    pub bearer_token: Option<String>,
+    pub download_id: String,
+    pub expected_total_bytes: Option<u64>,
+    pub relative_subdir: Option<String>,
+}
+
 pub async fn download_rom_to_library(
     app: &AppHandle,
     paths: &PortablePaths,
-    url: &str,
-    file_name: &str,
-    bearer_token: Option<&str>,
-    download_id: &str,
-    expected_total_bytes: Option<u64>,
-    relative_subdir: Option<&str>,
+    request: &DownloadRomRequest,
 ) -> Result<DownloadResult, String> {
     let roms_root = PathBuf::from(&paths.roms);
-    let target_dir = resolve_target_rom_dir(&roms_root, relative_subdir)?;
+    let target_dir = resolve_target_rom_dir(&roms_root, request.relative_subdir.as_deref())?;
 
     fs::create_dir_all(&target_dir)
         .map_err(|error| format!("Impossible de créer le dossier cible Roms: {}", error))?;
 
-    let safe_file_name = sanitize_file_name(file_name);
+    let safe_file_name = sanitize_file_name(&request.file_name);
     let destination = target_dir.join(&safe_file_name);
 
     let bytes_written = download_file(
         app,
-        url,
+        &request.url,
         &destination,
-        bearer_token,
-        download_id,
+        request.bearer_token.as_deref(),
+        &request.download_id,
         &safe_file_name,
-        expected_total_bytes,
+        request.expected_total_bytes,
     )
     .await?;
 
@@ -105,7 +111,10 @@ async fn download_file(
         .map_err(|error| format!("Téléchargement impossible: {}", error))?;
 
     if !response.status().is_success() {
-        return Err(format!("Téléchargement échoué avec le statut {}", response.status()));
+        return Err(format!(
+            "Téléchargement échoué avec le statut {}",
+            response.status()
+        ));
     }
 
     let total_bytes = response.content_length().or(expected_total_bytes);

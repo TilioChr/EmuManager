@@ -1,5 +1,7 @@
-﻿use crate::emulator_configurator::configure_emulator;
-use crate::dolphin_controller_writer::apply_saved_controller_profile_to_user_dir;
+use crate::emulator_configurator::configure_emulator;
+use crate::controller_profile_writer::{
+    apply_saved_controller_profile_for_rom, apply_saved_controller_profile_for_rom_to_user_dir,
+};
 use crate::portable_paths::PortablePaths;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -227,7 +229,7 @@ pub fn launch_dolphin(
                 rom_path.to_string_lossy()
             ),
         );
-        return launch_plain_dolphin(executable_path, rom_path);
+        return launch_plain_dolphin(paths, executable_path, rom_path);
     }
 
     configure_emulator(paths, "dolphin")?;
@@ -241,8 +243,12 @@ pub fn launch_dolphin(
         log_sync(paths, "launching Dolphin with local profile only");
     }
 
-    if let Some(write_result) =
-        apply_saved_controller_profile_to_user_dir(paths, "dolphin", &profile_user_dir)?
+    if let Some(write_result) = apply_saved_controller_profile_for_rom_to_user_dir(
+        paths,
+        "dolphin",
+        &profile_user_dir,
+        Some(rom_path),
+    )?
     {
         log_sync(
             paths,
@@ -294,13 +300,28 @@ pub fn launch_dolphin(
 }
 
 fn launch_plain_dolphin(
+    paths: &PortablePaths,
     executable_path: &Path,
     rom_path: &Path,
 ) -> Result<crate::game_launcher::GameLaunchResult, String> {
     let working_directory = executable_path
         .parent()
-        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Dolphin".to_string())?
+        .ok_or_else(|| "Impossible de determiner le dossier de travail Dolphin".to_string())?
         .to_path_buf();
+
+    if let Some(write_result) =
+        apply_saved_controller_profile_for_rom(paths, "dolphin", Some(rom_path))?
+    {
+        log_sync(
+            paths,
+            &format!(
+                "applied Dolphin controller profile {} to default profile {}",
+                write_result.profile_id, write_result.profile_path
+            ),
+        );
+    } else {
+        log_sync(paths, "no Dolphin controller profile configured");
+    }
 
     let status = Command::new(executable_path)
         .current_dir(&working_directory)
@@ -310,7 +331,7 @@ fn launch_plain_dolphin(
         .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
     if !status.success() {
-        return Err(format!("Dolphin s'est fermÃ© avec le code {:?}", status.code()));
+        return Err(format!("Dolphin s'est ferme avec le code {:?}", status.code()));
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -367,8 +388,22 @@ pub fn launch_melonds(
 
     let working_directory = executable_path
         .parent()
-        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail melonDS".to_string())?
+        .ok_or_else(|| "Impossible de determiner le dossier de travail melonDS".to_string())?
         .to_path_buf();
+
+    if let Some(write_result) =
+        apply_saved_controller_profile_for_rom(paths, "melonds", Some(rom_path))?
+    {
+        log_sync(
+            paths,
+            &format!(
+                "applied melonDS controller profile {} to config {}",
+                write_result.profile_id, write_result.profile_path
+            ),
+        );
+    } else {
+        log_sync(paths, "no melonDS controller profile configured");
+    }
 
     let status = Command::new(executable_path)
         .current_dir(&working_directory)
@@ -382,7 +417,7 @@ pub fn launch_melonds(
     );
 
     if !status.success() {
-        return Err(format!("melonDS s'est fermÃ© avec le code {:?}", status.code()));
+        return Err(format!("melonDS s'est ferme avec le code {:?}", status.code()));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
@@ -456,7 +491,7 @@ pub fn launch_azahar(
         );
         let working_directory = executable_path
             .parent()
-            .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Azahar".to_string())?
+            .ok_or_else(|| "Impossible de determiner le dossier de travail Azahar".to_string())?
             .to_path_buf();
         log_sync(
             paths,
@@ -466,6 +501,20 @@ pub fn launch_azahar(
                 working_directory.join("user").to_string_lossy()
             ),
         );
+
+        if let Some(write_result) =
+            apply_saved_controller_profile_for_rom(paths, "azahar", Some(rom_path))?
+        {
+            log_sync(
+                paths,
+                &format!(
+                    "applied Azahar controller profile {} to default profile {}",
+                    write_result.profile_id, write_result.profile_path
+                ),
+            );
+        } else {
+            log_sync(paths, "no Azahar controller profile configured");
+        }
 
         let mut child = Command::new(executable_path)
             .current_dir(&working_directory)
@@ -514,7 +563,12 @@ pub fn launch_azahar(
     }
 
     log_sync(paths, "Azahar step: apply controller profile");
-    match apply_saved_controller_profile_to_user_dir(paths, "azahar", &profile_root) {
+    match apply_saved_controller_profile_for_rom_to_user_dir(
+        paths,
+        "azahar",
+        &profile_root,
+        Some(rom_path),
+    ) {
         Ok(Some(write_result)) => {
             log_sync(
                 paths,
@@ -549,7 +603,7 @@ pub fn launch_azahar(
 
     let working_directory = executable_path
         .parent()
-        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Azahar".to_string())?
+        .ok_or_else(|| "Impossible de determiner le dossier de travail Azahar".to_string())?
         .to_path_buf();
     let portable_user_dir = working_directory.join("user");
     log_sync(
@@ -706,8 +760,22 @@ pub fn launch_eden(
 
         let working_directory = executable_path
             .parent()
-            .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Eden".to_string())?
+            .ok_or_else(|| "Impossible de determiner le dossier de travail Eden".to_string())?
             .to_path_buf();
+
+        if let Some(write_result) =
+            apply_saved_controller_profile_for_rom(paths, "eden", Some(rom_path))?
+        {
+            log_sync(
+                paths,
+                &format!(
+                    "applied Eden controller profile {} to default profile {}",
+                    write_result.profile_id, write_result.profile_path
+                ),
+            );
+        } else {
+            log_sync(paths, "no Eden controller profile configured");
+        }
 
         let status = Command::new(executable_path)
             .current_dir(&working_directory)
@@ -716,7 +784,7 @@ pub fn launch_eden(
             .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
         if !status.success() {
-            return Err(format!("Eden s'est fermÃ© avec le code {:?}", status.code()));
+            return Err(format!("Eden s'est ferme avec le code {:?}", status.code()));
         }
 
         return Ok(crate::game_launcher::GameLaunchResult {
@@ -735,8 +803,12 @@ pub fn launch_eden(
         log_sync(paths, "launching Eden with local profile only");
     }
 
-    if let Some(write_result) =
-        apply_saved_controller_profile_to_user_dir(paths, "eden", &profile_root)?
+    if let Some(write_result) = apply_saved_controller_profile_for_rom_to_user_dir(
+        paths,
+        "eden",
+        &profile_root,
+        Some(rom_path),
+    )?
     {
         log_sync(
             paths,
@@ -753,7 +825,7 @@ pub fn launch_eden(
 
     let working_directory = executable_path
         .parent()
-        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Eden".to_string())?
+        .ok_or_else(|| "Impossible de determiner le dossier de travail Eden".to_string())?
         .to_path_buf();
     let portable_user_dir = working_directory.join("user");
 
@@ -773,7 +845,7 @@ pub fn launch_eden(
     sync_eden_portable_user_back(paths, &portable_user_dir, &profile_root)?;
 
     if !status.success() {
-        return Err(format!("Eden s'est fermÃ© avec le code {:?}", status.code()));
+        return Err(format!("Eden s'est ferme avec le code {:?}", status.code()));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
@@ -838,11 +910,15 @@ pub fn launch_pcsx2(
 
         let working_directory = executable_path
             .parent()
-            .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail PCSX2".to_string())?
+            .ok_or_else(|| "Impossible de determiner le dossier de travail PCSX2".to_string())?
             .to_path_buf();
 
-        if let Some(write_result) =
-            apply_saved_controller_profile_to_user_dir(paths, "pcsx2", &working_directory)?
+        if let Some(write_result) = apply_saved_controller_profile_for_rom_to_user_dir(
+            paths,
+            "pcsx2",
+            &working_directory,
+            Some(rom_path),
+        )?
         {
             log_sync(
                 paths,
@@ -864,7 +940,7 @@ pub fn launch_pcsx2(
             .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
         if !status.success() {
-            return Err(format!("PCSX2 s'est fermÃ© avec le code {:?}", status.code()));
+            return Err(format!("PCSX2 s'est ferme avec le code {:?}", status.code()));
         }
 
         return Ok(crate::game_launcher::GameLaunchResult {
@@ -885,15 +961,19 @@ pub fn launch_pcsx2(
 
     let working_directory = executable_path
         .parent()
-        .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail PCSX2".to_string())?
+        .ok_or_else(|| "Impossible de determiner le dossier de travail PCSX2".to_string())?
         .to_path_buf();
     let portable_ini = working_directory.join("portable.ini");
 
     ensure_pcsx2_portable_mode(&portable_ini)?;
     materialize_pcsx2_portable_profile(paths, &profile_root, &working_directory)?;
 
-    if let Some(write_result) =
-        apply_saved_controller_profile_to_user_dir(paths, "pcsx2", &working_directory)?
+    if let Some(write_result) = apply_saved_controller_profile_for_rom_to_user_dir(
+        paths,
+        "pcsx2",
+        &working_directory,
+        Some(rom_path),
+    )?
     {
         log_sync(
             paths,
@@ -922,7 +1002,7 @@ pub fn launch_pcsx2(
     sync_pcsx2_portable_profile_back(paths, &working_directory, &profile_root)?;
 
     if !status.success() {
-        return Err(format!("PCSX2 s'est fermÃ© avec le code {:?}", status.code()));
+        return Err(format!("PCSX2 s'est ferme avec le code {:?}", status.code()));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
@@ -1104,7 +1184,7 @@ fn upload_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM Ã©chouÃ© avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM echoue avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1188,7 +1268,7 @@ fn maybe_restore_latest_melonds_save(
 
     let temp_dir = melonds_cache_root(paths, rom_path)?;
     fs::create_dir_all(&temp_dir)
-        .map_err(|error| format!("Impossible de prÃ©parer le cache melonDS: {}", error))?;
+        .map_err(|error| format!("Impossible de preparer le cache melonDS: {}", error))?;
 
     let archive_path = temp_dir.join(&archive_name);
     download_file(paths, session, &download_url, &archive_path)?;
@@ -1226,7 +1306,7 @@ fn upload_melonds_save_bundle(
 
     let cache_root = melonds_cache_root(paths, rom_path)?;
     fs::create_dir_all(&cache_root)
-        .map_err(|error| format!("Impossible de prÃ©parer le cache melonDS: {}", error))?;
+        .map_err(|error| format!("Impossible de preparer le cache melonDS: {}", error))?;
 
     let archive_path = cache_root.join("emumanager-melonds-sync.zip");
     create_zip_archive_from_files(&save_files, &archive_path)?;
@@ -1286,7 +1366,7 @@ fn upload_melonds_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM melonDS Ã©chouÃ© avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM melonDS echoue avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1375,10 +1455,10 @@ fn maybe_restore_latest_azahar_save(
 
     if profile_root.exists() {
         fs::remove_dir_all(profile_root)
-            .map_err(|error| format!("Impossible de rÃ©initialiser le profil Azahar: {}", error))?;
+            .map_err(|error| format!("Impossible de reinitialiser le profil Azahar: {}", error))?;
     }
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de recrÃ©er le profil Azahar: {}", error))?;
+        .map_err(|error| format!("Impossible de recreer le profil Azahar: {}", error))?;
 
     extract_zip_archive(&archive_path, profile_root)?;
     let _ = fs::remove_file(&archive_path);
@@ -1469,7 +1549,7 @@ fn upload_azahar_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM Azahar Ã©chouÃ© avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM Azahar echoue avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1557,7 +1637,7 @@ fn maybe_restore_latest_eden_save(
     download_file(paths, session, &download_url, &archive_path)?;
 
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de prÃ©parer le profil Eden: {}", error))?;
+        .map_err(|error| format!("Impossible de preparer le profil Eden: {}", error))?;
     for path in eden_sync_paths(profile_root) {
         remove_path_if_exists(&path)?;
     }
@@ -1657,7 +1737,7 @@ fn upload_eden_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM Eden Ã©chouÃ© avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM Eden echoue avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1745,7 +1825,7 @@ fn maybe_restore_latest_pcsx2_save(
     download_file(paths, session, &download_url, &archive_path)?;
 
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de prÃ©parer le profil PCSX2: {}", error))?;
+        .map_err(|error| format!("Impossible de preparer le profil PCSX2: {}", error))?;
     for path in pcsx2_sync_paths(profile_root) {
         remove_path_if_exists(&path)?;
     }
@@ -1845,7 +1925,7 @@ fn upload_pcsx2_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM PCSX2 Ã©chouÃ© avec le statut {}: {}", status, response_body));
+        return Err(format!("Upload RomM PCSX2 echoue avec le statut {}: {}", status, response_body));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -2061,10 +2141,8 @@ fn resolve_mapping_from_remote(
     });
 
     if matched.is_none() {
-        let mut fallback_games = match payload_again_from_single_search(paths, session, file_name)? {
-            Some(entries) => entries,
-            None => Vec::new(),
-        };
+        let mut fallback_games =
+            payload_again_from_single_search(paths, session, file_name)?.unwrap_or_default();
 
         if fallback_games.len() == 1 {
             let only = fallback_games.remove(0);
@@ -2233,7 +2311,7 @@ fn latest_melonds_save_timestamp_ms(rom_path: &Path) -> Result<Option<u64>, Stri
     for save_file in save_files {
         let metadata = fs::metadata(&save_file).map_err(|error| {
             format!(
-                "Impossible de lire les mÃ©tadonnÃ©es de {}: {}",
+                "Impossible de lire les metadonnees de {}: {}",
                 save_file.to_string_lossy(),
                 error
             )
@@ -2344,7 +2422,7 @@ fn collect_melonds_save_files(rom_path: &Path) -> Result<Vec<PathBuf>, String> {
         .map_err(|error| format!("Impossible de lire le dossier de saves melonDS: {}", error))?
     {
         let entry = entry_result
-            .map_err(|error| format!("Impossible de lire une entrÃ©e de save melonDS: {}", error))?;
+            .map_err(|error| format!("Impossible de lire une entree de save melonDS: {}", error))?;
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -2574,7 +2652,7 @@ fn seed_azahar_profile_from_base_user(paths: &PortablePaths, profile_root: &Path
     }
 
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de crÃ©er le profil Azahar: {}", error))?;
+        .map_err(|error| format!("Impossible de creer le profil Azahar: {}", error))?;
 
     let base_user_dir = azahar_base_user_dir(paths)?;
     if base_user_dir.exists() {
@@ -2592,7 +2670,7 @@ fn seed_azahar_profile_from_base_user(paths: &PortablePaths, profile_root: &Path
         let path = profile_root.join(directory);
         if !path.exists() {
             fs::create_dir_all(&path)
-                .map_err(|error| format!("Impossible de crÃ©er {} pour Azahar: {}", directory, error))?;
+                .map_err(|error| format!("Impossible de creer {} pour Azahar: {}", directory, error))?;
         }
     }
 
@@ -2622,7 +2700,7 @@ fn locate_azahar_executable_dir(install_root: &Path) -> Result<PathBuf, String> 
         .map_err(|error| format!("Impossible de lire le dossier Azahar: {}", error))?
     {
         let entry = entry_result
-            .map_err(|error| format!("Impossible de lire une entrÃ©e Azahar: {}", error))?;
+            .map_err(|error| format!("Impossible de lire une entree Azahar: {}", error))?;
         let path = entry.path();
         if path.is_dir() && path.join("azahar.exe").exists() {
             return Ok(path);
@@ -2642,7 +2720,7 @@ fn materialize_azahar_portable_user(
 ) -> Result<(), String> {
     if portable_user_dir.exists() {
         fs::remove_dir_all(portable_user_dir)
-            .map_err(|error| format!("Impossible de rÃ©initialiser le dossier user Azahar: {}", error))?;
+            .map_err(|error| format!("Impossible de reinitialiser le dossier user Azahar: {}", error))?;
     }
 
     copy_directory_recursive(profile_root, portable_user_dir)?;
@@ -2692,7 +2770,7 @@ fn seed_eden_profile_from_base_user(paths: &PortablePaths, profile_root: &Path) 
     }
 
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de crÃ©er le profil Eden: {}", error))?;
+        .map_err(|error| format!("Impossible de creer le profil Eden: {}", error))?;
 
     let base_user_dir = eden_base_user_dir()?;
     if base_user_dir.exists() {
@@ -2710,7 +2788,7 @@ fn seed_eden_profile_from_base_user(paths: &PortablePaths, profile_root: &Path) 
         let path = profile_root.join(directory);
         if !path.exists() {
             fs::create_dir_all(&path)
-                .map_err(|error| format!("Impossible de crÃ©er {} pour Eden: {}", directory, error))?;
+                .map_err(|error| format!("Impossible de creer {} pour Eden: {}", directory, error))?;
         }
     }
 
@@ -2730,7 +2808,7 @@ fn materialize_eden_portable_user(
 ) -> Result<(), String> {
     if portable_user_dir.exists() {
         fs::remove_dir_all(portable_user_dir)
-            .map_err(|error| format!("Impossible de rÃ©initialiser le dossier user Eden: {}", error))?;
+            .map_err(|error| format!("Impossible de reinitialiser le dossier user Eden: {}", error))?;
     }
 
     copy_directory_recursive(profile_root, portable_user_dir)?;
@@ -2779,7 +2857,7 @@ fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> R
     }
 
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de crÃ©er le profil PCSX2: {}", error))?;
+        .map_err(|error| format!("Impossible de creer le profil PCSX2: {}", error))?;
 
     let install_root = Path::new(&paths.emu).join("PCSX2");
     for name in ["memcards", "sstates"] {
@@ -2789,7 +2867,7 @@ fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> R
             copy_directory_recursive(&source, &destination)?;
         } else {
             fs::create_dir_all(&destination)
-                .map_err(|error| format!("Impossible de crÃ©er {} pour PCSX2: {}", name, error))?;
+                .map_err(|error| format!("Impossible de creer {} pour PCSX2: {}", name, error))?;
         }
     }
 
@@ -2802,7 +2880,7 @@ fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> R
 
 fn ensure_pcsx2_portable_mode(portable_ini_path: &Path) -> Result<(), String> {
     fs::write(portable_ini_path, "")
-        .map_err(|error| format!("Impossible de crÃ©er portable.ini pour PCSX2: {}", error))
+        .map_err(|error| format!("Impossible de creer portable.ini pour PCSX2: {}", error))
 }
 
 fn materialize_pcsx2_portable_profile(
@@ -2820,7 +2898,7 @@ fn materialize_pcsx2_portable_profile(
             copy_directory_recursive(&path, &destination)?;
         } else {
             fs::create_dir_all(&destination)
-                .map_err(|error| format!("Impossible de crÃ©er {} pour PCSX2: {}", destination.to_string_lossy(), error))?;
+                .map_err(|error| format!("Impossible de creer {} pour PCSX2: {}", destination.to_string_lossy(), error))?;
         }
     }
 
@@ -2841,7 +2919,7 @@ fn sync_pcsx2_portable_profile_back(
     profile_root: &Path,
 ) -> Result<(), String> {
     fs::create_dir_all(profile_root)
-        .map_err(|error| format!("Impossible de prÃ©parer le profil PCSX2: {}", error))?;
+        .map_err(|error| format!("Impossible de preparer le profil PCSX2: {}", error))?;
 
     for relative in ["memcards", "sstates"] {
         let source = working_directory.join(relative);
@@ -2903,7 +2981,7 @@ fn create_zip_archive(source_dir: &Path, archive_path: &Path) -> Result<(), Stri
 
 fn create_zip_archive_from_files(files: &[PathBuf], archive_path: &Path) -> Result<(), String> {
     let file = fs::File::create(archive_path)
-        .map_err(|error| format!("Impossible de crÃ©er l'archive de save: {}", error))?;
+        .map_err(|error| format!("Impossible de creer l'archive de save: {}", error))?;
     let mut writer = ZipWriter::new(file);
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
@@ -2916,7 +2994,7 @@ fn create_zip_archive_from_files(files: &[PathBuf], archive_path: &Path) -> Resu
 
         writer
             .start_file(file_name.replace('\\', "/"), options)
-            .map_err(|error| format!("Impossible d'ajouter un fichier Ã  l'archive: {}", error))?;
+            .map_err(|error| format!("Impossible d'ajouter un fichier a l'archive: {}", error))?;
 
         let mut file = fs::File::open(path)
             .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
@@ -2925,7 +3003,7 @@ fn create_zip_archive_from_files(files: &[PathBuf], archive_path: &Path) -> Resu
             .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
         writer
             .write_all(&buffer)
-            .map_err(|error| format!("Impossible d'Ã©crire un fichier dans l'archive: {}", error))?;
+            .map_err(|error| format!("Impossible d'ecrire un fichier dans l'archive: {}", error))?;
     }
 
     writer
@@ -2941,7 +3019,7 @@ fn create_zip_archive_from_paths(
     archive_path: &Path,
 ) -> Result<(), String> {
     let file = fs::File::create(archive_path)
-        .map_err(|error| format!("Impossible de crÃ©er l'archive de save: {}", error))?;
+        .map_err(|error| format!("Impossible de creer l'archive de save: {}", error))?;
     let mut writer = ZipWriter::new(file);
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
@@ -2981,13 +3059,13 @@ fn add_path_to_zip(
     if path.is_dir() {
         writer
             .add_directory(format!("{}/", name), options)
-            .map_err(|error| format!("Impossible d'ajouter un dossier Ã  l'archive: {}", error))?;
+            .map_err(|error| format!("Impossible d'ajouter un dossier a l'archive: {}", error))?;
 
         for entry_result in fs::read_dir(path)
             .map_err(|error| format!("Impossible de lire le dossier de save: {}", error))?
         {
             let entry = entry_result
-                .map_err(|error| format!("Impossible de lire une entrÃ©e de save: {}", error))?;
+                .map_err(|error| format!("Impossible de lire une entree de save: {}", error))?;
             add_path_to_zip(writer, &entry.path(), base_dir, options)?;
         }
 
@@ -2996,7 +3074,7 @@ fn add_path_to_zip(
 
     writer
         .start_file(name, options)
-        .map_err(|error| format!("Impossible d'ajouter un fichier Ã  l'archive: {}", error))?;
+        .map_err(|error| format!("Impossible d'ajouter un fichier a l'archive: {}", error))?;
 
     let mut file = fs::File::open(path)
         .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
@@ -3005,7 +3083,7 @@ fn add_path_to_zip(
         .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
     writer
         .write_all(&buffer)
-        .map_err(|error| format!("Impossible d'Ã©crire un fichier dans l'archive: {}", error))?;
+        .map_err(|error| format!("Impossible d'ecrire un fichier dans l'archive: {}", error))?;
 
     Ok(())
 }
