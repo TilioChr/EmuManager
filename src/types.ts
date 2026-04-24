@@ -85,9 +85,17 @@ export interface ControllerProfile {
   name: string;
   emulatorId: string;
   platformLabel: string;
+  physicalDeviceId?: string | null;
   physicalDeviceLabel: string;
+  emulatedControllerId?: string | null;
   emulatedDeviceLabel: string;
+  dolphinSettings?: ControllerDolphinSettings | null;
   bindings: ControllerBinding[];
+}
+
+export interface ControllerDolphinSettings {
+  irAutoHide: boolean;
+  irRelativeInput: boolean;
 }
 
 export interface ControllerWriteResult {
@@ -95,6 +103,12 @@ export interface ControllerWriteResult {
   profileId: string;
   profilePath: string;
   gameIniPath: string;
+}
+
+export interface ControllerProfileSaveResult {
+  profiles: ControllerProfile[];
+  writeResult?: ControllerWriteResult | null;
+  warning?: string | null;
 }
 
 export interface LocalRomEntry {

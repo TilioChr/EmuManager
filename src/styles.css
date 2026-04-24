@@ -199,7 +199,8 @@ ol {
   color: rgba(244, 247, 251, 0.85);
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
@@ -207,6 +208,15 @@ ol {
   border-radius: 14px;
   padding: 12px 14px;
   outline: none;
+}
+
+.field select {
+  appearance: none;
+}
+
+.field select option {
+  background: #111935;
+  color: #f4f7fb;
 }
 
 .field input::placeholder {
@@ -457,9 +467,237 @@ ol {
   flex-wrap: wrap;
 }
 
+.mapping-form {
+  display: grid;
+  gap: 18px;
+}
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.mapping-scan-actions {
+  display: flex;
+  align-items: end;
+}
+
+.scan-button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.button-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(244, 247, 251, 0.28);
+  border-top-color: #f4f7fb;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+.mapping-options {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.toggle-field {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  color: rgba(244, 247, 251, 0.84);
+  font-size: 14px;
+}
+
+.toggle-field input {
+  width: 18px;
+  height: 18px;
+  accent-color: #7cdbb0;
+}
+
+.mapping-designer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.mapping-stage-wrap,
+.mapping-side {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mapping-stage-wrap {
+  padding: 14px;
+  min-width: 0;
+}
+
+.mapping-stage-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.mapping-stage-heading div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mapping-stage-heading strong,
+.mapping-side strong {
+  color: #f4f7fb;
+}
+
+.mapping-stage-heading span,
+.mapping-stage-heading small,
+.mapping-side small {
+  color: rgba(244, 247, 251, 0.68);
+}
+
+.controller-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 330px;
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 24% 44%, rgba(124, 219, 176, 0.16), transparent 18%),
+    radial-gradient(circle at 78% 48%, rgba(255, 198, 109, 0.16), transparent 18%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
+}
+
+.controller-shell {
+  position: absolute;
+  inset: 13% 7%;
+  border-radius: 34% 34% 42% 42%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.045)),
+    rgba(6, 14, 30, 0.68);
+  box-shadow:
+    inset 0 0 36px rgba(255, 255, 255, 0.04),
+    0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.mapping-hotspot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: clamp(48px, 8vw, 74px);
+  min-height: 48px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 6px;
+  color: #f4f7fb;
+  background: rgba(10, 18, 36, 0.86);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.mapping-hotspot:hover {
+  border-color: rgba(124, 219, 176, 0.65);
+  transform: translate(-50%, -50%) scale(1.04);
+}
+
+.mapping-hotspot span {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mapping-hotspot small {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(244, 247, 251, 0.7);
+  font-size: 10px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapping-hotspot-bound {
+  background: rgba(33, 89, 73, 0.88);
+  border-color: rgba(124, 219, 176, 0.52);
+}
+
+.mapping-hotspot-listening {
+  background: rgba(120, 75, 18, 0.95);
+  border-color: rgba(255, 198, 109, 0.86);
+}
+
+.mapping-side {
+  padding: 16px;
+  display: grid;
+  align-content: space-between;
+  gap: 18px;
+}
+
+.mapping-side > div {
+  display: grid;
+  gap: 7px;
+}
+
+.mapping-progress-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mapping-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7cdbb0, #ffc66d);
+}
+
+.mapping-side-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mapping-side-actions .primary-button,
+.mapping-side-actions .ghost-button {
+  flex: 1;
+  min-width: 92px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .mapping-grid,
+  .mapping-designer {
+    grid-template-columns: 1fr;
+  }
+
+  .controller-stage {
+    min-height: 300px;
   }
 }
 
@@ -490,5 +728,18 @@ ol {
 
   .collapsible-header-main {
     padding-left: 44px;
+  }
+
+  .mapping-stage-heading {
+    flex-direction: column;
+  }
+
+  .controller-stage {
+    min-height: 440px;
+    aspect-ratio: 3 / 4;
+  }
+
+  .mapping-hotspot {
+    width: 54px;
   }
 }

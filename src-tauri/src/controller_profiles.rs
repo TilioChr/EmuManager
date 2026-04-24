@@ -19,9 +19,22 @@ pub struct ControllerProfile {
     pub name: String,
     pub emulator_id: String,
     pub platform_label: String,
+    #[serde(default)]
+    pub physical_device_id: Option<String>,
     pub physical_device_label: String,
+    #[serde(default)]
+    pub emulated_controller_id: Option<String>,
     pub emulated_device_label: String,
+    #[serde(default)]
+    pub dolphin_settings: Option<ControllerDolphinSettings>,
     pub bindings: Vec<ControllerBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerDolphinSettings {
+    pub ir_auto_hide: bool,
+    pub ir_relative_input: bool,
 }
 
 pub fn load_controller_profiles(paths: &PortablePaths) -> Result<Vec<ControllerProfile>, String> {

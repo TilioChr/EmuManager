@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import LibraryPanel from "./components/LibraryPanel";
 import RommConnectionCard from "./components/RommConnectionCard";
 import CollapsiblePanel from "./components/CollapsiblePanel";
+import ControllerMappingPanel from "./components/ControllerMappingPanel";
 import {
   resolveGameDownloadUrl,
   resolveGameLocalFileName,
@@ -16,6 +17,8 @@ import { buildPortablePaths } from "./lib/portableConfig";
 import type {
   AppConfig,
   ConfigureResult,
+  ControllerProfile,
+  ControllerProfileSaveResult,
   DownloadResult,
   EmulatorEntry,
   GameLaunchResult,
@@ -52,6 +55,7 @@ export default function App() {
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
   const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
   const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
+  const [controllerProfiles, setControllerProfiles] = useState<ControllerProfile[]>([]);
   const [saveSyncStatuses, setSaveSyncStatuses] = useState<Record<string, SaveSyncStatus>>({});
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -133,6 +137,13 @@ export default function App() {
 
         await refreshLocalRoms(portablePaths.root);
         await refreshLocalSaves(portablePaths.root);
+        const savedControllerProfiles = await invoke<ControllerProfile[]>(
+          "load_controller_profiles_command",
+          {
+            root: portablePaths.root
+          }
+        );
+        setControllerProfiles(savedControllerProfiles);
 
         const builtin = await invoke<Array<Omit<EmulatorEntry, "status">>>(
           "get_builtin_emulators"
@@ -233,6 +244,16 @@ export default function App() {
       config: nextConfig
     });
     setConfig(nextConfig);
+  };
+
+  const saveControllerProfile = async (profile: ControllerProfile) => {
+    const result = await invoke<ControllerProfileSaveResult>("save_controller_profile_command", {
+      root: paths.root,
+      profile
+    });
+
+    setControllerProfiles(result.profiles);
+    return result;
   };
 
   const removeInstalledFlag = async (id: string) => {
@@ -543,6 +564,12 @@ export default function App() {
           defaultBaseUrl={config.romm?.baseUrl}
           defaultUsername={config.romm?.username}
           onConnected={handleRommConnected}
+        />
+
+        <ControllerMappingPanel
+          selectedEmulator={selectedEmulator}
+          profiles={controllerProfiles}
+          onSaveProfile={saveControllerProfile}
         />
 
         <LibraryPanel
