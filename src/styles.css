@@ -575,6 +575,12 @@ ol {
     linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
 }
 
+.controller-stage-vertical {
+  aspect-ratio: 10 / 14;
+  min-height: 520px;
+  max-height: 90vh;
+}
+
 .controller-image {
   position: absolute;
   inset: 0;

@@ -43,6 +43,7 @@ interface EmulatedControllerDefinition {
   label: string;
   description: string;
   imageSrc: string;
+  stageVariant?: "default" | "vertical";
   inputs: EmulatedInputDefinition[];
 }
 
@@ -108,35 +109,35 @@ const gamecubeInputs: EmulatedInputDefinition[] = [
 ];
 
 const wiimoteInputs: EmulatedInputDefinition[] = [
-  input("wm_dpad_up", "Croix Haut", "D^", 24, 20),
-  input("wm_dpad_left", "Croix Gauche", "D<", 16, 31),
-  input("wm_dpad_right", "Croix Droite", "D>", 32, 31),
-  input("wm_dpad_down", "Croix Bas", "Dv", 24, 42),
-  input("wm_a", "Bouton A", "A", 50, 36),
-  input("wm_b", "Bouton B", "B", 50, 62),
-  input("wm_minus", "Minus", "-", 39, 50),
-  input("wm_plus", "Plus", "+", 61, 50),
-  input("wm_home", "Home", "H", 50, 50),
-  input("wm_one", "Bouton 1", "1", 44, 78),
-  input("wm_two", "Bouton 2", "2", 56, 78),
-  input("wm_ir_up", "IR Haut", "I^", 76, 20),
-  input("wm_ir_left", "IR Gauche", "I<", 68, 32),
-  input("wm_ir_right", "IR Droite", "I>", 84, 32),
-  input("wm_ir_down", "IR Bas", "Iv", 76, 44),
-  input("wm_ir_recenter", "IR Recentrer", "IR", 86, 56),
-  input("wm_shake_x", "Secouer X", "SX", 76, 70),
-  input("wm_shake_y", "Secouer Y", "SY", 84, 82),
-  input("wm_shake_z", "Secouer Z", "SZ", 68, 82)
+  input("wm_dpad_up", "Croix Haut", "D^", 67, 13),
+  input("wm_dpad_left", "Croix Gauche", "D<", 62, 19),
+  input("wm_dpad_right", "Croix Droite", "D>", 71.5, 19),
+  input("wm_dpad_down", "Croix Bas", "Dv", 67, 25),
+  input("wm_a", "Bouton A", "A", 67, 33),
+  input("wm_b", "Bouton B", "B", 77, 33),
+  input("wm_minus", "Minus", "-", 61, 48.5),
+  input("wm_plus", "Plus", "+", 73, 48.5),
+  input("wm_home", "Home", "H", 67, 48.5),
+  input("wm_one", "Bouton 1", "1", 67, 72),
+  input("wm_two", "Bouton 2", "2", 67, 80),
+  input("wm_ir_up", "IR Haut", "I^", 51, 4),
+  input("wm_ir_left", "IR Gauche", "I<", 46, 9),
+  input("wm_ir_right", "IR Droite", "I>", 56, 9),
+  input("wm_ir_down", "IR Bas", "Iv", 51, 14),
+  input("wm_ir_recenter", "IR Recentrer", "IR", 38, 6),
+  input("wm_shake_x", "Secouer X", "SX", 85, 60),
+  input("wm_shake_y", "Secouer Y", "SY", 95, 60),
+  input("wm_shake_z", "Secouer Z", "SZ", 90, 54)
 ];
 
 const wiimoteNunchukInputs: EmulatedInputDefinition[] = [
   ...wiimoteInputs,
-  input("nunchuk_up", "Nunchuk Haut", "N^", 78, 70),
-  input("nunchuk_left", "Nunchuk Gauche", "N<", 70, 84),
-  input("nunchuk_right", "Nunchuk Droite", "N>", 86, 84),
-  input("nunchuk_down", "Nunchuk Bas", "Nv", 78, 96),
-  input("nunchuk_c", "Nunchuk C", "C", 91, 20),
-  input("nunchuk_z", "Nunchuk Z", "Z", 91, 38)
+  input("nunchuk_up", "Nunchuk Haut", "N^", 42, 20),
+  input("nunchuk_left", "Nunchuk Gauche", "N<", 36, 27),
+  input("nunchuk_right", "Nunchuk Droite", "N>", 48, 27),
+  input("nunchuk_down", "Nunchuk Bas", "Nv", 42, 35),
+  input("nunchuk_c", "Nunchuk C", "C", 30, 18),
+  input("nunchuk_z", "Nunchuk Z", "Z", 26, 25)
 ];
 
 const classicInputs: EmulatedInputDefinition[] = [
@@ -261,8 +262,8 @@ const azaharInputs: EmulatedInputDefinition[] = [
 const controllerCatalog: Record<string, EmulatedControllerDefinition[]> = {
   dolphin: [
     controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeImage, gamecubeInputs),
-    controller("wiimote", "Wiimote", "Wiimote seule", wiiNunchukImage, wiimoteInputs),
-    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiiNunchukImage, wiimoteNunchukInputs),
+    controller("wiimote", "Wiimote", "Wiimote seule", wiiNunchukImage, wiimoteInputs, "vertical"),
+    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiiNunchukImage, wiimoteNunchukInputs, "vertical"),
     controller("classic_controller", "Wii Classic Controller", "Extension Classic Controller", classicWiiImage, classicInputs)
   ],
   eden: [
@@ -743,7 +744,12 @@ export default function ControllerMappingPanel({
                 <small>{completion.done}/{completion.total} binds</small>
               </div>
 
-              <div className="controller-stage" aria-label={`Mapping ${selectedController.label}`}>
+              <div
+                className={`controller-stage ${
+                  selectedController.stageVariant === "vertical" ? "controller-stage-vertical" : ""
+                }`}
+                aria-label={`Mapping ${selectedController.label}`}
+              >
                 <img
                   className="controller-image"
                   src={selectedController.imageSrc}
@@ -832,9 +838,10 @@ function controller(
   label: string,
   description: string,
   imageSrc: string,
-  inputs: EmulatedInputDefinition[]
+  inputs: EmulatedInputDefinition[],
+  stageVariant: "default" | "vertical" = "default"
 ): EmulatedControllerDefinition {
-  return { id, label, description, imageSrc, inputs };
+  return { id, label, description, imageSrc, stageVariant, inputs };
 }
 
 function getCompatibleControllers(emulatorId: string) {
