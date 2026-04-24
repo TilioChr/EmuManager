@@ -1,4 +1,4 @@
-# EmuManager (v0.1)
+# EmuManager
 
 EmuManager is a portable interface to centralize emulator installation, management, and game launching, with direct integration to RomM for ROM handling.
 
