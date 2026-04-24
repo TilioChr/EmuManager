@@ -1,3 +1,4 @@
+use crate::dolphin_controller_writer::apply_saved_controller_profile;
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;
@@ -14,6 +15,7 @@ pub struct LaunchResult {
 
 pub fn launch_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<LaunchResult, String> {
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
+    let _ = apply_saved_controller_profile(paths, emulator_id);
 
     let working_directory = executable_path
         .parent()

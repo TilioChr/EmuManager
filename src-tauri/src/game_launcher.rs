@@ -1,7 +1,10 @@
+use crate::dolphin_controller_writer::apply_saved_controller_profile;
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::platform_router::resolve_emulator_id_for_rom_path;
 use crate::portable_paths::PortablePaths;
-use crate::romm_sync::{launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession};
+use crate::romm_sync::{
+    launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,6 +25,7 @@ pub fn launch_game(
     romm_session: Option<&RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
+    let _ = apply_saved_controller_profile(paths, emulator_id);
 
     let rom = PathBuf::from(rom_path);
     if !rom.exists() {
@@ -59,7 +63,10 @@ pub fn launch_game(
             command.arg("-batch").arg(&rom);
         }
         _ => {
-            return Err(format!("Lancement de jeu non implémenté pour {}", emulator_id));
+            return Err(format!(
+                "Lancement de jeu non implémenté pour {}",
+                emulator_id
+            ));
         }
     }
 

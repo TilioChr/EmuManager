@@ -1,4 +1,5 @@
 ﻿use crate::emulator_configurator::configure_emulator;
+use crate::dolphin_controller_writer::apply_saved_controller_profile_to_user_dir;
 use crate::portable_paths::PortablePaths;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -237,6 +238,21 @@ pub fn launch_dolphin(
         cleanup_dolphin_transient_files(paths, &profile_user_dir)?;
     } else {
         log_sync(paths, "launching Dolphin with local profile only");
+    }
+
+    if let Some(write_result) =
+        apply_saved_controller_profile_to_user_dir(paths, "dolphin", &profile_user_dir)?
+    {
+        log_sync(
+            paths,
+            &format!(
+                "applied Dolphin controller profile {} to game profile {}",
+                write_result.profile_id,
+                profile_user_dir.to_string_lossy()
+            ),
+        );
+    } else {
+        log_sync(paths, "no Dolphin controller profile configured");
     }
 
     let working_directory = executable_path
