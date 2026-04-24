@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::block_on;
 use zip::write::SimpleFileOptions;
@@ -407,8 +408,9 @@ pub fn launch_azahar(
     log_sync(
         paths,
         &format!(
-            "launch_azahar rom_path={} mode={}",
+            "launch_azahar rom_path={} executable={} mode={}",
             rom_path.to_string_lossy(),
+            executable_path.to_string_lossy(),
             if session.is_some() { "online" } else { "offline" }
         ),
     );
@@ -434,6 +436,15 @@ pub fn launch_azahar(
 
     let profile_root = azahar_profile_root(paths, rom_path)?;
     let has_existing_local_save = latest_azahar_save_timestamp_ms(paths, rom_path)?.is_some();
+    log_sync(
+        paths,
+        &format!(
+            "Azahar launch state profile_root={} mapping_found={} has_existing_local_save={}",
+            profile_root.to_string_lossy(),
+            mapping.is_some(),
+            has_existing_local_save
+        ),
+    );
 
     if mapping.is_none() && !has_existing_local_save {
         log_sync(
@@ -447,16 +458,46 @@ pub fn launch_azahar(
             .parent()
             .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Azahar".to_string())?
             .to_path_buf();
+        log_sync(
+            paths,
+            &format!(
+                "plain Azahar launch cwd={} user_dir={}",
+                working_directory.to_string_lossy(),
+                working_directory.join("user").to_string_lossy()
+            ),
+        );
 
-        let status = Command::new(executable_path)
+        let mut child = Command::new(executable_path)
             .current_dir(&working_directory)
             .arg(rom_path)
-            .status()
-            .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
+            .spawn()
+            .map_err(|error| {
+                log_sync(
+                    paths,
+                    &format!("plain Azahar command failed to start: {}", error),
+                );
+                format!("Lancement du jeu impossible: {}", error)
+            })?;
 
-        if !status.success() {
-            return Err(format!("Azahar s'est fermÃ© avec le code {:?}", status.code()));
-        }
+        log_sync(
+            paths,
+            &format!("plain Azahar process started pid={}", child.id()),
+        );
+        let paths_for_wait = paths.clone();
+        thread::spawn(move || match child.wait() {
+            Ok(status) => log_sync(
+                &paths_for_wait,
+                &format!(
+                    "plain Azahar exited success={} code={:?}",
+                    status.success(),
+                    status.code()
+                ),
+            ),
+            Err(error) => log_sync(
+                &paths_for_wait,
+                &format!("plain Azahar wait failed: {}", error),
+            ),
+        });
 
         return Ok(crate::game_launcher::GameLaunchResult {
             emulator_id: "azahar".to_string(),
@@ -466,10 +507,42 @@ pub fn launch_azahar(
         });
     }
 
-    seed_azahar_profile_from_base_user(paths, &profile_root)?;
+    log_sync(paths, "Azahar step: seed profile from base user");
+    if let Err(error) = seed_azahar_profile_from_base_user(paths, &profile_root) {
+        log_sync(paths, &format!("Azahar seed profile failed: {}", error));
+        return Err(error);
+    }
+
+    log_sync(paths, "Azahar step: apply controller profile");
+    match apply_saved_controller_profile_to_user_dir(paths, "azahar", &profile_root) {
+        Ok(Some(write_result)) => {
+            log_sync(
+                paths,
+                &format!(
+                    "applied Azahar controller profile {} to game profile {} config={}",
+                    write_result.profile_id,
+                    profile_root.to_string_lossy(),
+                    write_result.profile_path
+                ),
+            );
+        }
+        Ok(None) => {
+            log_sync(paths, "no Azahar controller profile configured");
+        }
+        Err(error) => {
+            log_sync(paths, &format!("Azahar controller profile apply failed: {}", error));
+            return Err(error);
+        }
+    }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        maybe_restore_latest_azahar_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        log_sync(paths, "Azahar step: maybe restore latest remote save");
+        if let Err(error) =
+            maybe_restore_latest_azahar_save(paths, active_session, current_mapping, rom_path, &profile_root)
+        {
+            log_sync(paths, &format!("Azahar remote restore failed: {}", error));
+            return Err(error);
+        }
     } else {
         log_sync(paths, "launching Azahar with local profile only");
     }
@@ -479,31 +552,103 @@ pub fn launch_azahar(
         .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail Azahar".to_string())?
         .to_path_buf();
     let portable_user_dir = working_directory.join("user");
+    log_sync(
+        paths,
+        &format!(
+            "Azahar launch directories cwd={} portable_user_dir={}",
+            working_directory.to_string_lossy(),
+            portable_user_dir.to_string_lossy()
+        ),
+    );
 
-    materialize_azahar_portable_user(paths, &profile_root, &portable_user_dir)?;
-
-    let status = Command::new(executable_path)
-        .current_dir(&working_directory)
-        .arg(rom_path)
-        .status()
-        .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
+    log_sync(paths, "Azahar step: materialize portable user");
+    if let Err(error) = materialize_azahar_portable_user(paths, &profile_root, &portable_user_dir) {
+        log_sync(paths, &format!("Azahar materialize portable user failed: {}", error));
+        return Err(error);
+    }
 
     log_sync(
         paths,
-        &format!("azahar exited success={} code={:?}", status.success(), status.code()),
+        &format!(
+            "Azahar step: start process exe={} rom={}",
+            executable_path.to_string_lossy(),
+            rom_path.to_string_lossy()
+        ),
     );
+    let mut child = Command::new(executable_path)
+        .current_dir(&working_directory)
+        .arg(rom_path)
+        .spawn()
+        .map_err(|error| {
+            log_sync(paths, &format!("Azahar command failed to start: {}", error));
+            format!("Lancement du jeu impossible: {}", error)
+        })?;
+    log_sync(paths, &format!("Azahar process started pid={}", child.id()));
 
-    sync_azahar_portable_user_back(paths, &portable_user_dir, &profile_root)?;
+    let paths_for_wait = paths.clone();
+    let portable_user_dir_for_wait = portable_user_dir.clone();
+    let profile_root_for_wait = profile_root.clone();
+    let rom_path_for_wait = rom_path.to_path_buf();
+    let session_for_wait = session.cloned();
+    let mapping_for_wait = mapping.clone();
 
-    if !status.success() {
-        return Err(format!("Azahar s'est fermÃ© avec le code {:?}", status.code()));
-    }
+    thread::spawn(move || {
+        match child.wait() {
+            Ok(status) => {
+                log_sync(
+                    &paths_for_wait,
+                    &format!(
+                        "azahar exited success={} code={:?}",
+                        status.success(),
+                        status.code()
+                    ),
+                );
+                log_sync(&paths_for_wait, "Azahar step: sync portable user back");
+                if let Err(error) = sync_azahar_portable_user_back(
+                    &paths_for_wait,
+                    &portable_user_dir_for_wait,
+                    &profile_root_for_wait,
+                ) {
+                    log_sync(
+                        &paths_for_wait,
+                        &format!("Azahar sync portable user back failed: {}", error),
+                    );
+                    return;
+                }
 
-    if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        upload_azahar_save_bundle(paths, active_session, current_mapping, rom_path, &profile_root)?;
-    } else {
-        log_sync(paths, "skip Azahar remote upload because no active RomM session or no mapping");
-    }
+                if !status.success() {
+                    log_sync(
+                        &paths_for_wait,
+                        &format!("Azahar exited with failing status code={:?}", status.code()),
+                    );
+                    return;
+                }
+
+                if let (Some(active_session), Some(current_mapping)) =
+                    (session_for_wait.as_ref(), mapping_for_wait.as_ref())
+                {
+                    if let Err(error) = upload_azahar_save_bundle(
+                        &paths_for_wait,
+                        active_session,
+                        current_mapping,
+                        &rom_path_for_wait,
+                        &profile_root_for_wait,
+                    ) {
+                        log_sync(
+                            &paths_for_wait,
+                            &format!("Azahar remote upload failed: {}", error),
+                        );
+                    }
+                } else {
+                    log_sync(
+                        &paths_for_wait,
+                        "skip Azahar remote upload because no active RomM session or no mapping",
+                    );
+                }
+            }
+            Err(error) => log_sync(&paths_for_wait, &format!("Azahar wait failed: {}", error)),
+        }
+    });
 
     Ok(crate::game_launcher::GameLaunchResult {
         emulator_id: "azahar".to_string(),
@@ -588,6 +733,22 @@ pub fn launch_eden(
         maybe_restore_latest_eden_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
     } else {
         log_sync(paths, "launching Eden with local profile only");
+    }
+
+    if let Some(write_result) =
+        apply_saved_controller_profile_to_user_dir(paths, "eden", &profile_root)?
+    {
+        log_sync(
+            paths,
+            &format!(
+                "applied Eden controller profile {} to game profile {} config={}",
+                write_result.profile_id,
+                profile_root.to_string_lossy(),
+                write_result.profile_path
+            ),
+        );
+    } else {
+        log_sync(paths, "no Eden controller profile configured");
     }
 
     let working_directory = executable_path
@@ -680,6 +841,20 @@ pub fn launch_pcsx2(
             .ok_or_else(|| "Impossible de dÃ©terminer le dossier de travail PCSX2".to_string())?
             .to_path_buf();
 
+        if let Some(write_result) =
+            apply_saved_controller_profile_to_user_dir(paths, "pcsx2", &working_directory)?
+        {
+            log_sync(
+                paths,
+                &format!(
+                    "applied PCSX2 controller profile {} to install config {}",
+                    write_result.profile_id, write_result.profile_path
+                ),
+            );
+        } else {
+            log_sync(paths, "no PCSX2 controller profile configured");
+        }
+
         let status = Command::new(executable_path)
             .current_dir(&working_directory)
             .arg("-batch")
@@ -716,6 +891,20 @@ pub fn launch_pcsx2(
 
     ensure_pcsx2_portable_mode(&portable_ini)?;
     materialize_pcsx2_portable_profile(paths, &profile_root, &working_directory)?;
+
+    if let Some(write_result) =
+        apply_saved_controller_profile_to_user_dir(paths, "pcsx2", &working_directory)?
+    {
+        log_sync(
+            paths,
+            &format!(
+                "applied PCSX2 controller profile {} to install config {}",
+                write_result.profile_id, write_result.profile_path
+            ),
+        );
+    } else {
+        log_sync(paths, "no PCSX2 controller profile configured");
+    }
 
     let status = Command::new(executable_path)
         .current_dir(&working_directory)

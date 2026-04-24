@@ -26,8 +26,11 @@ pub fn apply_controller_profile(
     profile: &ControllerProfile,
 ) -> Result<ControllerWriteResult, String> {
     match profile.emulator_id.as_str() {
+        "azahar" => crate::azahar_controller_writer::apply_azahar_profile(paths, profile),
         "dolphin" => apply_dolphin_profile(paths, profile),
+        "eden" => crate::eden_controller_writer::apply_eden_profile(paths, profile),
         "melonds" => crate::melonds_controller_writer::apply_melonds_profile(paths, profile),
+        "pcsx2" => crate::pcsx2_controller_writer::apply_pcsx2_profile(paths, profile),
         _ => Err(format!(
             "Ecriture de profil non implementee pour {}",
             profile.emulator_id
@@ -61,7 +64,31 @@ pub fn apply_saved_controller_profile_to_user_dir(
         .find(|entry| entry.emulator_id == emulator_id);
 
     match profile {
-        Some(profile) => apply_dolphin_profile_to_user_dir(profile, user_dir).map(Some),
+        Some(profile) => match emulator_id {
+            "azahar" => {
+                crate::azahar_controller_writer::apply_azahar_profile_to_user_dir(
+                    paths, profile, user_dir,
+                )
+                .map(Some)
+            }
+            "dolphin" => apply_dolphin_profile_to_user_dir(profile, user_dir).map(Some),
+            "eden" => {
+                crate::eden_controller_writer::apply_eden_profile_to_user_dir(
+                    paths, profile, user_dir,
+                )
+                .map(Some)
+            }
+            "pcsx2" => {
+                crate::pcsx2_controller_writer::apply_pcsx2_profile_to_install_dir(
+                    paths, profile, user_dir,
+                )
+                .map(Some)
+            }
+            _ => Err(format!(
+                "Ecriture de profil non implementee pour {}",
+                emulator_id
+            )),
+        },
         None => Ok(None),
     }
 }

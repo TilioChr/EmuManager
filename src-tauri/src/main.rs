@@ -1,14 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod azahar_controller_writer;
 mod config_store;
 mod controller_profiles;
 mod dolphin_controller_writer;
+mod eden_controller_writer;
 mod emulator_configurator;
 mod emulator_installer;
 mod emulator_registry;
 mod game_launcher;
 mod local_library;
 mod melonds_controller_writer;
+mod pcsx2_controller_writer;
 mod platform_router;
 mod portable_paths;
 mod process_launcher;

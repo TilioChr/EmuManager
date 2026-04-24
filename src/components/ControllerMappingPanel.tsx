@@ -224,6 +224,32 @@ const compactNintendoInputs: EmulatedInputDefinition[] = [
   input("nds_a", "Bouton A", "A", 84, 64)
 ];
 
+const azaharInputs: EmulatedInputDefinition[] = [
+  input("3ds_circle_up", "Stick Haut", "L^", 24, 31),
+  input("3ds_circle_left", "Stick Gauche", "L<", 16, 43),
+  input("3ds_circle_right", "Stick Droite", "L>", 32, 43),
+  input("3ds_circle_down", "Stick Bas", "Lv", 24, 55),
+  input("3ds_dpad_up", "Croix Haut", "D^", 22, 66),
+  input("3ds_dpad_left", "Croix Gauche", "D<", 14, 78),
+  input("3ds_dpad_right", "Croix Droite", "D>", 30, 78),
+  input("3ds_dpad_down", "Croix Bas", "Dv", 22, 90),
+  input("3ds_l", "L", "L", 22, 15),
+  input("3ds_r", "R", "R", 78, 15),
+  input("3ds_zl", "ZL", "ZL", 12, 22),
+  input("3ds_zr", "ZR", "ZR", 88, 22),
+  input("3ds_select", "Select", "Se", 42, 50),
+  input("3ds_start", "Start", "St", 58, 50),
+  input("3ds_home", "Home", "H", 50, 63),
+  input("3ds_y", "Bouton Y", "Y", 72, 38),
+  input("3ds_x", "Bouton X", "X", 84, 44),
+  input("3ds_b", "Bouton B", "B", 72, 58),
+  input("3ds_a", "Bouton A", "A", 84, 64),
+  input("3ds_c_up", "C-Stick Haut", "C^", 64, 69),
+  input("3ds_c_left", "C-Stick Gauche", "C<", 56, 81),
+  input("3ds_c_right", "C-Stick Droite", "C>", 72, 81),
+  input("3ds_c_down", "C-Stick Bas", "Cv", 64, 93)
+];
+
 const controllerCatalog: Record<string, EmulatedControllerDefinition[]> = {
   dolphin: [
     controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeInputs),
@@ -242,7 +268,7 @@ const controllerCatalog: Record<string, EmulatedControllerDefinition[]> = {
     controller("nds", "Nintendo DS controls", "Boutons Nintendo DS", compactNintendoInputs)
   ],
   azahar: [
-    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", compactNintendoInputs)
+    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", azaharInputs)
   ]
 };
 
