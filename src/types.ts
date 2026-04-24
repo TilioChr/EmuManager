@@ -66,6 +66,15 @@ export interface GameLaunchResult {
   launched: boolean;
 }
 
+export interface SaveSyncStatus {
+  romPath: string;
+  rommId?: string | null;
+  emulatorId: string;
+  hasLocalSave: boolean;
+  localSaveUpdatedAtMs?: number | null;
+  lastKnownRemoteSaveAt?: string | null;
+}
+
 export interface ControllerBinding {
   physicalInput: string;
   emulatedInput: string;

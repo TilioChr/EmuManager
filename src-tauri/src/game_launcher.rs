@@ -1,6 +1,7 @@
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::platform_router::resolve_emulator_id_for_rom_path;
 use crate::portable_paths::PortablePaths;
+use crate::romm_sync::{launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
@@ -18,6 +19,7 @@ pub fn launch_game(
     paths: &PortablePaths,
     emulator_id: &str,
     rom_path: &str,
+    romm_session: Option<&RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
 
@@ -36,19 +38,19 @@ pub fn launch_game(
 
     match emulator_id {
         "dolphin" => {
-            command.arg("--exec").arg(&rom);
+            return launch_dolphin(paths, &executable_path, &rom, romm_session);
         }
         "melonds" => {
-            command.arg(&rom);
+            return launch_melonds(paths, &executable_path, &rom, romm_session);
         }
         "eden" => {
-            command.arg(&rom);
+            return launch_eden(paths, &executable_path, &rom, romm_session);
         }
         "pcsx2" => {
-            command.arg("-batch").arg("--").arg(&rom);
+            return launch_pcsx2(paths, &executable_path, &rom, romm_session);
         }
         "azahar" => {
-            command.arg(&rom);
+            return launch_azahar(paths, &executable_path, &rom, romm_session);
         }
         "ppsspp" => {
             command.arg(&rom);
@@ -75,5 +77,14 @@ pub fn launch_game(
 
 pub fn launch_game_auto(paths: &PortablePaths, rom_path: &str) -> Result<GameLaunchResult, String> {
     let emulator_id = resolve_emulator_id_for_rom_path(paths, rom_path)?;
-    launch_game(paths, &emulator_id, rom_path)
+    launch_game(paths, &emulator_id, rom_path, None)
+}
+
+pub fn launch_game_auto_with_session(
+    paths: &PortablePaths,
+    rom_path: &str,
+    romm_session: Option<&RommLaunchSession>,
+) -> Result<GameLaunchResult, String> {
+    let emulator_id = resolve_emulator_id_for_rom_path(paths, rom_path)?;
+    launch_game(paths, &emulator_id, rom_path, romm_session)
 }

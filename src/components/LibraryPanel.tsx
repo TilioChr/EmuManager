@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { getRommGames, type RommGame, type RommSession } from "../lib/romm";
-import type { LocalRomEntry } from "../types";
+import {
+  getLatestRommSave,
+  getRommGames,
+  type RommGame,
+  type RommSaveEntry,
+  type RommSession
+} from "../lib/romm";
+import type { LocalRomEntry, SaveSyncStatus } from "../types";
 import CollapsiblePanel from "./CollapsiblePanel";
 
 interface LibraryPanelProps {
   session: RommSession | null;
   localRoms: LocalRomEntry[];
+  saveSyncStatuses: Record<string, SaveSyncStatus>;
   onDownloadGame: (game: RommGame) => Promise<void>;
   onLaunchLocalRom: (romPath: string) => Promise<void>;
   downloadingGameId?: string | null;
@@ -23,12 +30,15 @@ interface LibraryItem {
   fileName: string;
   downloaded: boolean;
   localPath?: string;
+  rommId?: string;
+  localSaveStatus?: SaveSyncStatus;
   remoteGame?: RommGame;
 }
 
 export default function LibraryPanel({
   session,
   localRoms,
+  saveSyncStatuses,
   onDownloadGame,
   onLaunchLocalRom,
   downloadingGameId = null,
@@ -36,6 +46,7 @@ export default function LibraryPanel({
   notice = null
 }: LibraryPanelProps) {
   const [games, setGames] = useState<RommGame[]>([]);
+  const [remoteSaveStatuses, setRemoteSaveStatuses] = useState<Record<string, RommSaveEntry | null>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -44,6 +55,7 @@ export default function LibraryPanel({
   useEffect(() => {
     if (!session) {
       setGames([]);
+      setRemoteSaveStatuses({});
     }
   }, [session]);
 
@@ -67,6 +79,8 @@ export default function LibraryPanel({
         fileName,
         downloaded: Boolean(localMatch),
         localPath: localMatch?.filePath,
+        rommId: String(game.id),
+        localSaveStatus: localMatch ? saveSyncStatuses[localMatch.filePath] : undefined,
         remoteGame: game
       };
     });
@@ -81,7 +95,9 @@ export default function LibraryPanel({
         platform: rom.platformGuess,
         fileName: rom.fileName,
         downloaded: true,
-        localPath: rom.filePath
+        localPath: rom.filePath,
+        rommId: saveSyncStatuses[rom.filePath]?.rommId ?? undefined,
+        localSaveStatus: saveSyncStatuses[rom.filePath]
       }));
 
     return [...remoteItems, ...localOnlyItems].sort((left, right) => {
@@ -98,7 +114,52 @@ export default function LibraryPanel({
 
       return left.title.localeCompare(right.title, "en", { sensitivity: "base" });
     });
-  }, [games, localByFileName, localRoms]);
+  }, [games, localByFileName, localRoms, saveSyncStatuses]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const itemsWithRemoteSave = mergedItems.filter(
+      (item): item is LibraryItem & { rommId: string; localSaveStatus: SaveSyncStatus } =>
+        typeof item.rommId === "string" &&
+        item.rommId.length > 0 &&
+        item.localSaveStatus !== undefined &&
+        Boolean(resolveSlotName(item.localSaveStatus.emulatorId))
+    );
+
+    if (!itemsWithRemoteSave.length) {
+      setRemoteSaveStatuses({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRemoteStatuses = async () => {
+      const entries = await Promise.all(
+        itemsWithRemoteSave.map(async (item) => [
+            item.rommId,
+            await getLatestRommSave(
+              session,
+              item.rommId,
+              item.localSaveStatus.emulatorId,
+              resolveSlotName(item.localSaveStatus.emulatorId)!
+            )
+          ] as const)
+      );
+
+      if (!cancelled) {
+        setRemoteSaveStatuses(Object.fromEntries(entries));
+      }
+    };
+
+    void loadRemoteStatuses();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mergedItems, session]);
 
   const platformOptions = useMemo(() => {
     const unique = Array.from(new Set(mergedItems.map((item) => item.platform))).sort((a, b) =>
@@ -204,6 +265,22 @@ export default function LibraryPanel({
                   {item.downloaded ? " • downloaded" : ""}
                 </p>
                 <small>{item.fileName}</small>
+                <div className="library-save-meta">
+                  <small>
+                    Local save:{" "}
+                    {item.localSaveStatus?.hasLocalSave && item.localSaveStatus.localSaveUpdatedAtMs
+                      ? formatLocalTimestamp(item.localSaveStatus.localSaveUpdatedAtMs)
+                      : "none"}
+                  </small>
+                  <small>
+                    RomM save:{" "}
+                    {formatRemoteSaveValue(
+                      session,
+                      item.localSaveStatus?.lastKnownRemoteSaveAt ?? null,
+                      item.rommId ? remoteSaveStatuses[item.rommId] ?? null : null
+                    )}
+                  </small>
+                </div>
               </div>
 
               <div className="library-actions">
@@ -276,4 +353,56 @@ function getRemoteFileName(game: RommGame): string | null {
       : undefined) ??
     null
   );
+}
+
+function formatLocalTimestamp(value: number): string {
+  return new Date(value).toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function formatRemoteSaveValue(
+  session: RommSession | null,
+  fallbackRemoteDate: string | null,
+  remoteSave: RommSaveEntry | null
+): string {
+  if (remoteSave?.updated_at) {
+    return formatIsoTimestamp(remoteSave.updated_at);
+  }
+
+  if (fallbackRemoteDate) {
+    return `${formatIsoTimestamp(fallbackRemoteDate)}${session ? "" : " (cached)"}`;
+  }
+
+  return session ? "none" : "offline";
+}
+
+function formatIsoTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function resolveSlotName(emulatorId: string): string | null {
+  switch (emulatorId) {
+    case "dolphin":
+      return "EmuManager Dolphin";
+    case "melonds":
+      return "EmuManager melonDS";
+    case "azahar":
+      return "EmuManager Azahar";
+    case "eden":
+      return "EmuManager Eden";
+    case "pcsx2":
+      return "EmuManager PCSX2";
+    default:
+      return null;
+  }
 }

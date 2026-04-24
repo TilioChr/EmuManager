@@ -289,6 +289,13 @@ ol {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.library-save-meta {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  color: rgba(244, 247, 251, 0.72);
+}
+
 .last-rom {
   margin-top: 12px;
   word-break: break-all;

@@ -9,6 +9,11 @@ export interface RommSession {
   token: string;
 }
 
+export interface RommLaunchSession {
+  baseUrl: string;
+  token: string;
+}
+
 export interface RommPlatform {
   id: number | string;
   name: string;
@@ -50,6 +55,15 @@ export interface RommGame {
   [key: string]: unknown;
 }
 
+export interface RommSaveEntry {
+  id: number | string;
+  file_name?: string;
+  updated_at?: string;
+  slot?: string;
+  emulator?: string;
+  [key: string]: unknown;
+}
+
 export class RommError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -78,6 +92,7 @@ const DEFAULT_SCOPES = [
   "roms.read",
   "platforms.read",
   "assets.read",
+  "assets.write",
   "firmware.read",
   "collections.read",
   "me.read"
@@ -184,6 +199,34 @@ export async function getRommGames(session: RommSession): Promise<RommGame[]> {
   }
 
   return payload.items || payload.results || [];
+}
+
+export async function getLatestRommSave(
+  session: RommSession,
+  romId: string | number,
+  emulatorId: string,
+  slotName: string
+): Promise<RommSaveEntry | null> {
+  const payload = await rommFetch<
+    RommSaveEntry[] | { items?: RommSaveEntry[]; results?: RommSaveEntry[] }
+  >(
+    session,
+    `/api/saves?rom_id=${encodeURIComponent(String(romId))}&emulator=${encodeURIComponent(
+      emulatorId
+    )}&slot=${encodeURIComponent(
+      slotName
+    )}`
+  );
+
+  const saves = Array.isArray(payload) ? payload : payload.items || payload.results || [];
+
+  return saves
+    .filter((entry) => typeof entry.file_name === "string" && entry.file_name.endsWith(".zip"))
+    .sort((left, right) => {
+      const leftDate = left.updated_at || "";
+      const rightDate = right.updated_at || "";
+      return rightDate.localeCompare(leftDate);
+    })[0] ?? null;
 }
 
 function absolutize(baseUrl: string, raw: string): string {
