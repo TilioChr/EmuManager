@@ -572,26 +572,30 @@ ol {
   border-radius: 14px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 24% 44%, rgba(124, 219, 176, 0.16), transparent 18%),
-    radial-gradient(circle at 78% 48%, rgba(255, 198, 109, 0.16), transparent 18%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
 }
 
-.controller-shell {
+.controller-stage-vertical {
+  aspect-ratio: 10 / 14;
+  min-height: 520px;
+  max-height: 90vh;
+}
+
+.controller-image {
   position: absolute;
-  inset: 13% 7%;
-  border-radius: 34% 34% 42% 42%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background:
-    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.045)),
-    rgba(6, 14, 30, 0.68);
-  box-shadow:
-    inset 0 0 36px rgba(255, 255, 255, 0.04),
-    0 16px 40px rgba(0, 0, 0, 0.22);
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 18px;
+  pointer-events: none;
+  user-select: none;
 }
 
 .mapping-hotspot {
   position: absolute;
+  z-index: 1;
   transform: translate(-50%, -50%);
   width: clamp(48px, 8vw, 74px);
   min-height: 48px;

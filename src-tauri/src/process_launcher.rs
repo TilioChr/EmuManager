@@ -1,4 +1,4 @@
-use crate::dolphin_controller_writer::apply_saved_controller_profile;
+use crate::controller_profile_writer::apply_saved_controller_profile;
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;

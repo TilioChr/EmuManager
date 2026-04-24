@@ -1,17 +1,8 @@
-use crate::controller_profiles::{load_controller_profiles, ControllerProfile};
+use crate::controller_profile_writer::ControllerWriteResult;
+use crate::controller_profiles::ControllerProfile;
 use crate::portable_paths::PortablePaths;
-use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ControllerWriteResult {
-    pub emulator_id: String,
-    pub profile_id: String,
-    pub profile_path: String,
-    pub game_ini_path: String,
-}
 
 #[derive(Debug, Clone, Copy)]
 enum DolphinControllerKind {
@@ -21,79 +12,7 @@ enum DolphinControllerKind {
     Classic,
 }
 
-pub fn apply_controller_profile(
-    paths: &PortablePaths,
-    profile: &ControllerProfile,
-) -> Result<ControllerWriteResult, String> {
-    match profile.emulator_id.as_str() {
-        "azahar" => crate::azahar_controller_writer::apply_azahar_profile(paths, profile),
-        "dolphin" => apply_dolphin_profile(paths, profile),
-        "eden" => crate::eden_controller_writer::apply_eden_profile(paths, profile),
-        "melonds" => crate::melonds_controller_writer::apply_melonds_profile(paths, profile),
-        "pcsx2" => crate::pcsx2_controller_writer::apply_pcsx2_profile(paths, profile),
-        _ => Err(format!(
-            "Ecriture de profil non implementee pour {}",
-            profile.emulator_id
-        )),
-    }
-}
-
-pub fn apply_saved_controller_profile(
-    paths: &PortablePaths,
-    emulator_id: &str,
-) -> Result<Option<ControllerWriteResult>, String> {
-    let profiles = load_controller_profiles(paths)?;
-    let profile = profiles
-        .iter()
-        .find(|entry| entry.emulator_id == emulator_id);
-
-    match profile {
-        Some(profile) => apply_controller_profile(paths, profile).map(Some),
-        None => Ok(None),
-    }
-}
-
-pub fn apply_saved_controller_profile_to_user_dir(
-    paths: &PortablePaths,
-    emulator_id: &str,
-    user_dir: &Path,
-) -> Result<Option<ControllerWriteResult>, String> {
-    let profiles = load_controller_profiles(paths)?;
-    let profile = profiles
-        .iter()
-        .find(|entry| entry.emulator_id == emulator_id);
-
-    match profile {
-        Some(profile) => match emulator_id {
-            "azahar" => {
-                crate::azahar_controller_writer::apply_azahar_profile_to_user_dir(
-                    paths, profile, user_dir,
-                )
-                .map(Some)
-            }
-            "dolphin" => apply_dolphin_profile_to_user_dir(profile, user_dir).map(Some),
-            "eden" => {
-                crate::eden_controller_writer::apply_eden_profile_to_user_dir(
-                    paths, profile, user_dir,
-                )
-                .map(Some)
-            }
-            "pcsx2" => {
-                crate::pcsx2_controller_writer::apply_pcsx2_profile_to_install_dir(
-                    paths, profile, user_dir,
-                )
-                .map(Some)
-            }
-            _ => Err(format!(
-                "Ecriture de profil non implementee pour {}",
-                emulator_id
-            )),
-        },
-        None => Ok(None),
-    }
-}
-
-fn apply_dolphin_profile(
+pub fn apply_dolphin_profile(
     paths: &PortablePaths,
     profile: &ControllerProfile,
 ) -> Result<ControllerWriteResult, String> {
@@ -103,7 +22,7 @@ fn apply_dolphin_profile(
     apply_dolphin_profile_to_user_dir(profile, &user_dir)
 }
 
-fn apply_dolphin_profile_to_user_dir(
+pub fn apply_dolphin_profile_to_user_dir(
     profile: &ControllerProfile,
     user_dir: &Path,
 ) -> Result<ControllerWriteResult, String> {
@@ -236,11 +155,7 @@ fn sanitize_profile_name(input: &str) -> String {
     }
 }
 
-fn build_dolphin_gc_profile(
-    profile: &ControllerProfile,
-    section: &str,
-    device: &str,
-) -> String {
+fn build_dolphin_gc_profile(profile: &ControllerProfile, section: &str, device: &str) -> String {
     let mut lines = vec![
         section.to_string(),
         format!("Device = {}", device),
@@ -267,11 +182,11 @@ fn build_dolphin_gc_profile(
         ),
         format!(
             "Triggers/L = {}",
-            find_binding_any(profile, &["L", "Gachette L", "GÃ¢chette L"], "Trigger L")
+            find_binding_any(profile, &["L", "Gachette L"], "Trigger L")
         ),
         format!(
             "Triggers/R = {}",
-            find_binding_any(profile, &["R", "Gachette R", "GÃ¢chette R"], "Trigger R")
+            find_binding_any(profile, &["R", "Gachette R"], "Trigger R")
         ),
         format!(
             "Main Stick/Up = {}",
@@ -483,11 +398,11 @@ fn build_dolphin_wiimote_profile(
                 ),
                 format!(
                     "Classic/Triggers/L = {}",
-                    find_binding_any(profile, &["L", "Gachette L", "GÃ¢chette L"], "Trigger L")
+                    find_binding_any(profile, &["L", "Gachette L"], "Trigger L")
                 ),
                 format!(
                     "Classic/Triggers/R = {}",
-                    find_binding_any(profile, &["R", "Gachette R", "GÃ¢chette R"], "Trigger R")
+                    find_binding_any(profile, &["R", "Gachette R"], "Trigger R")
                 ),
                 format!(
                     "Classic/Triggers/ZL = {}",
@@ -719,12 +634,7 @@ fn is_dualsense_label(lower_label: &str) -> bool {
 }
 
 fn clean_physical_device_label(label: &str) -> String {
-    label
-        .split(" (")
-        .next()
-        .unwrap_or(label)
-        .trim()
-        .to_string()
+    label.split(" (").next().unwrap_or(label).trim().to_string()
 }
 
 fn quote_dolphin_control(value: &str) -> String {

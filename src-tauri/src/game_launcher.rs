@@ -1,4 +1,3 @@
-use crate::dolphin_controller_writer::apply_saved_controller_profile;
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::platform_router::resolve_emulator_id_for_rom_path;
 use crate::portable_paths::PortablePaths;
@@ -25,7 +24,6 @@ pub fn launch_game(
     romm_session: Option<&RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
-    let _ = apply_saved_controller_profile(paths, emulator_id);
 
     let rom = PathBuf::from(rom_path);
     if !rom.exists() {
@@ -80,11 +78,6 @@ pub fn launch_game(
         rom_path: rom.to_string_lossy().to_string(),
         launched: true,
     })
-}
-
-pub fn launch_game_auto(paths: &PortablePaths, rom_path: &str) -> Result<GameLaunchResult, String> {
-    let emulator_id = resolve_emulator_id_for_rom_path(paths, rom_path)?;
-    launch_game(paths, &emulator_id, rom_path, None)
 }
 
 pub fn launch_game_auto_with_session(

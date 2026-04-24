@@ -1,4 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import controller3dsImage from "../assets/controllers/3DS.png";
+import classicWiiImage from "../assets/controllers/CLASSICWII.png";
+import dsImage from "../assets/controllers/DS.png";
+import gamecubeImage from "../assets/controllers/GAMECUBE.png";
+import ps2Image from "../assets/controllers/PS2.png";
+import switchProImage from "../assets/controllers/SWITCHPRO.png";
+import wiiNunchukImage from "../assets/controllers/WIINUNCHUK.png";
 import type {
   ControllerBinding,
   ControllerDolphinSettings,
@@ -35,6 +42,8 @@ interface EmulatedControllerDefinition {
   id: string;
   label: string;
   description: string;
+  imageSrc: string;
+  stageVariant?: "default" | "vertical";
   inputs: EmulatedInputDefinition[];
 }
 
@@ -77,198 +86,198 @@ const gamepadAxes = [
 ];
 
 const gamecubeInputs: EmulatedInputDefinition[] = [
-  input("gc_stick_up", "Stick Haut", "L^", 24, 28),
-  input("gc_stick_left", "Stick Gauche", "L<", 16, 42),
-  input("gc_stick_right", "Stick Droite", "L>", 32, 42),
-  input("gc_stick_down", "Stick Bas", "Lv", 24, 56),
-  input("gc_dpad_up", "Croix Haut", "D^", 18, 68),
-  input("gc_dpad_left", "Croix Gauche", "D<", 10, 80),
-  input("gc_dpad_right", "Croix Droite", "D>", 26, 80),
-  input("gc_dpad_down", "Croix Bas", "Dv", 18, 92),
-  input("gc_start", "Start", "S", 50, 48),
-  input("gc_z", "Z", "Z", 68, 18),
-  input("gc_l", "L", "L", 24, 13),
-  input("gc_r", "R", "R", 76, 13),
-  input("gc_y", "Bouton Y", "Y", 75, 34),
-  input("gc_x", "Bouton X", "X", 88, 40),
-  input("gc_b", "Bouton B", "B", 70, 54),
-  input("gc_a", "Bouton A", "A", 82, 60),
-  input("gc_c_up", "C Haut", "C^", 60, 64),
-  input("gc_c_left", "C Gauche", "C<", 52, 76),
-  input("gc_c_right", "C Droite", "C>", 68, 76),
-  input("gc_c_down", "C Bas", "Cv", 60, 88)
+  input("gc_stick_up", "Stick Haut", "L^", 28, 28),
+  input("gc_stick_left", "Stick Gauche", "L<", 20, 39),
+  input("gc_stick_right", "Stick Droite", "L>", 35, 39),
+  input("gc_stick_down", "Stick Bas", "Lv", 28, 49),
+  input("gc_dpad_up", "Croix Haut", "D^", 38, 57),
+  input("gc_dpad_left", "Croix Gauche", "D<", 32, 66),
+  input("gc_dpad_right", "Croix Droite", "D>", 44, 66),
+  input("gc_dpad_down", "Croix Bas", "Dv", 38, 74),
+  input("gc_start", "Start", "S", 50, 38),
+  input("gc_z", "Z", "Z", 80, 18),
+  input("gc_l", "L", "L", 24, 11),
+  input("gc_r", "R", "R", 76, 11),
+  input("gc_y", "Bouton Y", "Y", 70, 26),
+  input("gc_x", "Bouton X", "X", 80, 37),
+  input("gc_b", "Bouton B", "B", 64, 46),
+  input("gc_a", "Bouton A", "A", 72, 39),
+  input("gc_c_up", "C Haut", "C^", 62, 57),
+  input("gc_c_left", "C Gauche", "C<", 56, 66),
+  input("gc_c_right", "C Droite", "C>", 68, 66),
+  input("gc_c_down", "C Bas", "Cv", 62, 74)
 ];
 
 const wiimoteInputs: EmulatedInputDefinition[] = [
-  input("wm_dpad_up", "Croix Haut", "D^", 24, 20),
-  input("wm_dpad_left", "Croix Gauche", "D<", 16, 31),
-  input("wm_dpad_right", "Croix Droite", "D>", 32, 31),
-  input("wm_dpad_down", "Croix Bas", "Dv", 24, 42),
-  input("wm_a", "Bouton A", "A", 50, 36),
-  input("wm_b", "Bouton B", "B", 50, 62),
-  input("wm_minus", "Minus", "-", 39, 50),
-  input("wm_plus", "Plus", "+", 61, 50),
-  input("wm_home", "Home", "H", 50, 50),
-  input("wm_one", "Bouton 1", "1", 44, 78),
-  input("wm_two", "Bouton 2", "2", 56, 78),
-  input("wm_ir_up", "IR Haut", "I^", 76, 20),
-  input("wm_ir_left", "IR Gauche", "I<", 68, 32),
-  input("wm_ir_right", "IR Droite", "I>", 84, 32),
-  input("wm_ir_down", "IR Bas", "Iv", 76, 44),
-  input("wm_ir_recenter", "IR Recentrer", "IR", 86, 56),
-  input("wm_shake_x", "Secouer X", "SX", 76, 70),
-  input("wm_shake_y", "Secouer Y", "SY", 84, 82),
-  input("wm_shake_z", "Secouer Z", "SZ", 68, 82)
+  input("wm_dpad_up", "Croix Haut", "D^", 67, 13),
+  input("wm_dpad_left", "Croix Gauche", "D<", 62, 19),
+  input("wm_dpad_right", "Croix Droite", "D>", 71.5, 19),
+  input("wm_dpad_down", "Croix Bas", "Dv", 67, 25),
+  input("wm_a", "Bouton A", "A", 67, 33),
+  input("wm_b", "Bouton B", "B", 77, 33),
+  input("wm_minus", "Minus", "-", 61, 48.5),
+  input("wm_plus", "Plus", "+", 73, 48.5),
+  input("wm_home", "Home", "H", 67, 48.5),
+  input("wm_one", "Bouton 1", "1", 67, 72),
+  input("wm_two", "Bouton 2", "2", 67, 80),
+  input("wm_ir_up", "IR Haut", "I^", 51, 4),
+  input("wm_ir_left", "IR Gauche", "I<", 46, 9),
+  input("wm_ir_right", "IR Droite", "I>", 56, 9),
+  input("wm_ir_down", "IR Bas", "Iv", 51, 14),
+  input("wm_ir_recenter", "IR Recentrer", "IR", 38, 6),
+  input("wm_shake_x", "Secouer X", "SX", 85, 60),
+  input("wm_shake_y", "Secouer Y", "SY", 95, 60),
+  input("wm_shake_z", "Secouer Z", "SZ", 90, 54)
 ];
 
 const wiimoteNunchukInputs: EmulatedInputDefinition[] = [
   ...wiimoteInputs,
-  input("nunchuk_up", "Nunchuk Haut", "N^", 78, 70),
-  input("nunchuk_left", "Nunchuk Gauche", "N<", 70, 84),
-  input("nunchuk_right", "Nunchuk Droite", "N>", 86, 84),
-  input("nunchuk_down", "Nunchuk Bas", "Nv", 78, 96),
-  input("nunchuk_c", "Nunchuk C", "C", 91, 20),
-  input("nunchuk_z", "Nunchuk Z", "Z", 91, 38)
+  input("nunchuk_up", "Nunchuk Haut", "N^", 42, 20),
+  input("nunchuk_left", "Nunchuk Gauche", "N<", 36, 27),
+  input("nunchuk_right", "Nunchuk Droite", "N>", 48, 27),
+  input("nunchuk_down", "Nunchuk Bas", "Nv", 42, 35),
+  input("nunchuk_c", "Nunchuk C", "C", 30, 18),
+  input("nunchuk_z", "Nunchuk Z", "Z", 26, 25)
 ];
 
 const classicInputs: EmulatedInputDefinition[] = [
-  input("cc_l", "L", "L", 24, 14),
-  input("cc_r", "R", "R", 76, 14),
-  input("cc_zl", "ZL", "ZL", 12, 20),
-  input("cc_zr", "ZR", "ZR", 88, 20),
-  input("cc_dpad_up", "Croix Haut", "D^", 23, 39),
-  input("cc_dpad_left", "Croix Gauche", "D<", 15, 51),
-  input("cc_dpad_right", "Croix Droite", "D>", 31, 51),
-  input("cc_dpad_down", "Croix Bas", "Dv", 23, 63),
-  input("cc_stick_up", "Stick Haut", "L^", 39, 65),
-  input("cc_stick_left", "Stick Gauche", "L<", 31, 77),
-  input("cc_stick_right", "Stick Droite", "L>", 47, 77),
-  input("cc_stick_down", "Stick Bas", "Lv", 39, 89),
+  input("cc_l", "L", "L", 20, 12),
+  input("cc_r", "R", "R", 80, 12),
+  input("cc_zl", "ZL", "ZL", 37, 14),
+  input("cc_zr", "ZR", "ZR", 63, 14),
+  input("cc_dpad_up", "Croix Haut", "D^", 20.5, 35),
+  input("cc_dpad_left", "Croix Gauche", "D<", 13, 47.5),
+  input("cc_dpad_right", "Croix Droite", "D>", 28, 47.5),
+  input("cc_dpad_down", "Croix Bas", "Dv", 20.5, 61),
+  input("cc_stick_up", "Stick Haut", "L^", 36.5, 64),
+  input("cc_stick_left", "Stick Gauche", "L<", 30, 75),
+  input("cc_stick_right", "Stick Droite", "L>", 43.5, 75),
+  input("cc_stick_down", "Stick Bas", "Lv", 36.5, 86),
   input("cc_minus", "Minus", "-", 43, 47),
   input("cc_plus", "Plus", "+", 57, 47),
-  input("cc_home", "Home", "H", 50, 56),
-  input("cc_y", "Bouton Y", "Y", 72, 40),
-  input("cc_x", "Bouton X", "X", 84, 45),
-  input("cc_b", "Bouton B", "B", 70, 58),
-  input("cc_a", "Bouton A", "A", 82, 64),
-  input("cc_rs_up", "Stick Droit Haut", "R^", 62, 68),
-  input("cc_rs_left", "Stick Droit Gauche", "R<", 54, 80),
-  input("cc_rs_right", "Stick Droit Droite", "R>", 70, 80),
-  input("cc_rs_down", "Stick Droit Bas", "Rv", 62, 92)
+  input("cc_home", "Home", "H", 50, 47),
+  input("cc_y", "Bouton Y", "Y", 70, 47),
+  input("cc_x", "Bouton X", "X", 80, 37),
+  input("cc_b", "Bouton B", "B", 80, 58),
+  input("cc_a", "Bouton A", "A", 89, 47),
+  input("cc_rs_up", "Stick Droit Haut", "R^", 63.5, 64),
+  input("cc_rs_left", "Stick Droit Gauche", "R<", 57, 75),
+  input("cc_rs_right", "Stick Droit Droite", "R>", 70, 75),
+  input("cc_rs_down", "Stick Droit Bas", "Rv", 63.5, 86)
 ];
 
 const switchInputs: EmulatedInputDefinition[] = [
-  input("sw_l", "L", "L", 20, 14),
-  input("sw_r", "R", "R", 80, 14),
-  input("sw_zl", "ZL", "ZL", 11, 22),
-  input("sw_zr", "ZR", "ZR", 89, 22),
-  input("sw_left_up", "Stick Haut", "L^", 24, 35),
-  input("sw_left_left", "Stick Gauche", "L<", 16, 47),
-  input("sw_left_right", "Stick Droite", "L>", 32, 47),
-  input("sw_left_down", "Stick Bas", "Lv", 24, 59),
-  input("sw_dpad_up", "Croix Haut", "D^", 33, 68),
-  input("sw_dpad_left", "Croix Gauche", "D<", 25, 80),
-  input("sw_dpad_right", "Croix Droite", "D>", 41, 80),
-  input("sw_dpad_down", "Croix Bas", "Dv", 33, 92),
-  input("sw_minus", "Minus", "-", 42, 45),
-  input("sw_plus", "Plus", "+", 58, 45),
-  input("sw_home", "Home", "H", 58, 57),
-  input("sw_capture", "Capture", "C", 42, 57),
-  input("sw_y", "Bouton Y", "Y", 70, 34),
-  input("sw_x", "Bouton X", "X", 82, 40),
-  input("sw_b", "Bouton B", "B", 70, 54),
-  input("sw_a", "Bouton A", "A", 82, 60),
-  input("sw_right_up", "Stick Droit Haut", "R^", 66, 68),
-  input("sw_right_left", "Stick Droit Gauche", "R<", 58, 80),
-  input("sw_right_right", "Stick Droit Droite", "R>", 74, 80),
-  input("sw_right_down", "Stick Droit Bas", "Rv", 66, 92)
+  input("sw_l", "L", "L", 30, 17),
+  input("sw_r", "R", "R", 70, 17),
+  input("sw_zl", "ZL", "ZL", 35, 12),
+  input("sw_zr", "ZR", "ZR", 65, 12),
+  input("sw_left_up", "Stick Haut", "L^", 32, 26),
+  input("sw_left_left", "Stick Gauche", "L<", 26.5, 35),
+  input("sw_left_right", "Stick Droite", "L>", 38, 35),
+  input("sw_left_down", "Stick Bas", "Lv", 32, 43),
+  input("sw_dpad_up", "Croix Haut", "D^", 40.5, 43),
+  input("sw_dpad_left", "Croix Gauche", "D<", 35, 50),
+  input("sw_dpad_right", "Croix Droite", "D>", 46, 50),
+  input("sw_dpad_down", "Croix Bas", "Dv", 40.5, 57),
+  input("sw_minus", "Minus", "-", 41.5, 26),
+  input("sw_plus", "Plus", "+", 59, 26),
+  input("sw_home", "Home", "H", 55, 35),
+  input("sw_capture", "Capture", "C", 45.5, 35),
+  input("sw_y", "Bouton Y", "Y", 63, 34.5),
+  input("sw_x", "Bouton X", "X", 68, 27),
+  input("sw_b", "Bouton B", "B", 68, 42),
+  input("sw_a", "Bouton A", "A", 72.5, 34.5),
+  input("sw_right_up", "Stick Droit Haut", "R^", 59, 43),
+  input("sw_right_left", "Stick Droit Gauche", "R<", 53.5, 50),
+  input("sw_right_right", "Stick Droit Droite", "R>", 64.5, 50),
+  input("sw_right_down", "Stick Droit Bas", "Rv", 59, 57)
 ];
 
 const dualshockInputs: EmulatedInputDefinition[] = [
-  input("ps_l1", "L1", "L1", 22, 14),
-  input("ps_r1", "R1", "R1", 78, 14),
-  input("ps_l2", "L2", "L2", 12, 21),
-  input("ps_r2", "R2", "R2", 88, 21),
-  input("ps_left_up", "Stick Haut", "L^", 27, 39),
-  input("ps_left_left", "Stick Gauche", "L<", 19, 51),
-  input("ps_left_right", "Stick Droite", "L>", 35, 51),
-  input("ps_left_down", "Stick Bas", "Lv", 27, 63),
-  input("ps_dpad_up", "Croix Haut", "D^", 19, 65),
-  input("ps_dpad_left", "Croix Gauche", "D<", 11, 77),
-  input("ps_dpad_right", "Croix Droite", "D>", 27, 77),
-  input("ps_dpad_down", "Croix Bas", "Dv", 19, 89),
-  input("ps_select", "Select", "Se", 42, 48),
-  input("ps_start", "Start", "St", 58, 48),
-  input("ps_square", "Carre", "Sq", 71, 41),
-  input("ps_triangle", "Triangle", "Tr", 83, 35),
-  input("ps_cross", "Croix", "X", 83, 61),
-  input("ps_circle", "Rond", "O", 93, 50),
-  input("ps_right_up", "Stick Droit Haut", "R^", 62, 66),
-  input("ps_right_left", "Stick Droit Gauche", "R<", 54, 78),
-  input("ps_right_right", "Stick Droit Droite", "R>", 70, 78),
-  input("ps_right_down", "Stick Droit Bas", "Rv", 62, 90)
+  input("ps_l1", "L1", "L1", 26, 12),
+  input("ps_r1", "R1", "R1", 74, 12),
+  input("ps_l2", "L2", "L2", 26, 5),
+  input("ps_r2", "R2", "R2", 74, 5),
+  input("ps_left_up", "Stick Haut", "L^", 38.5, 48),
+  input("ps_left_left", "Stick Gauche", "L<", 32, 58),
+  input("ps_left_right", "Stick Droite", "L>", 45, 58),
+  input("ps_left_down", "Stick Bas", "Lv", 38.5, 69),
+  input("ps_dpad_up", "Croix Haut", "D^", 26, 25),
+  input("ps_dpad_left", "Croix Gauche", "D<", 19.5, 36),
+  input("ps_dpad_right", "Croix Droite", "D>", 32, 36),
+  input("ps_dpad_down", "Croix Bas", "Dv", 26, 48),
+  input("ps_select", "Select", "Se", 42.5, 37),
+  input("ps_start", "Start", "St", 57.5, 37),
+  input("ps_square", "Carre", "Sq", 67, 36),
+  input("ps_triangle", "Triangle", "Tr", 74, 24),
+  input("ps_cross", "Croix", "X", 74, 48),
+  input("ps_circle", "Rond", "O", 81, 36),
+  input("ps_right_up", "Stick Droit Haut", "R^", 61.5, 48),
+  input("ps_right_left", "Stick Droit Gauche", "R<", 55, 58),
+  input("ps_right_right", "Stick Droit Droite", "R>", 68, 58),
+  input("ps_right_down", "Stick Droit Bas", "Rv", 61.5, 69)
 ];
 
 const compactNintendoInputs: EmulatedInputDefinition[] = [
-  input("nds_dpad_up", "Croix Haut", "D^", 22, 34),
-  input("nds_dpad_left", "Croix Gauche", "D<", 14, 46),
-  input("nds_dpad_right", "Croix Droite", "D>", 30, 46),
-  input("nds_dpad_down", "Croix Bas", "Dv", 22, 58),
-  input("nds_l", "L", "L", 22, 16),
-  input("nds_r", "R", "R", 78, 16),
-  input("nds_select", "Select", "Se", 42, 49),
-  input("nds_start", "Start", "St", 58, 49),
-  input("nds_y", "Bouton Y", "Y", 72, 38),
-  input("nds_x", "Bouton X", "X", 84, 44),
-  input("nds_b", "Bouton B", "B", 72, 58),
-  input("nds_a", "Bouton A", "A", 84, 64)
+  input("nds_dpad_up", "Croix Haut", "D^", 12.75, 34),
+  input("nds_dpad_left", "Croix Gauche", "D<", 5, 46),
+  input("nds_dpad_right", "Croix Droite", "D>", 20.5, 46),
+  input("nds_dpad_down", "Croix Bas", "Dv", 12.75, 58),
+  input("nds_l", "L", "L", 8, 14),
+  input("nds_r", "R", "R", 92, 14),
+  input("nds_select", "Select", "Se", 80, 82.5),
+  input("nds_start", "Start", "St", 80, 73),
+  input("nds_y", "Bouton Y", "Y", 81.5, 43),
+  input("nds_x", "Bouton X", "X", 87, 33),
+  input("nds_b", "Bouton B", "B", 87, 52),
+  input("nds_a", "Bouton A", "A", 92.5, 43)
 ];
 
 const azaharInputs: EmulatedInputDefinition[] = [
-  input("3ds_circle_up", "Stick Haut", "L^", 24, 31),
-  input("3ds_circle_left", "Stick Gauche", "L<", 16, 43),
-  input("3ds_circle_right", "Stick Droite", "L>", 32, 43),
-  input("3ds_circle_down", "Stick Bas", "Lv", 24, 55),
-  input("3ds_dpad_up", "Croix Haut", "D^", 22, 66),
-  input("3ds_dpad_left", "Croix Gauche", "D<", 14, 78),
-  input("3ds_dpad_right", "Croix Droite", "D>", 30, 78),
-  input("3ds_dpad_down", "Croix Bas", "Dv", 22, 90),
-  input("3ds_l", "L", "L", 22, 15),
-  input("3ds_r", "R", "R", 78, 15),
-  input("3ds_zl", "ZL", "ZL", 12, 22),
-  input("3ds_zr", "ZR", "ZR", 88, 22),
-  input("3ds_select", "Select", "Se", 42, 50),
-  input("3ds_start", "Start", "St", 58, 50),
-  input("3ds_home", "Home", "H", 50, 63),
-  input("3ds_y", "Bouton Y", "Y", 72, 38),
-  input("3ds_x", "Bouton X", "X", 84, 44),
-  input("3ds_b", "Bouton B", "B", 72, 58),
-  input("3ds_a", "Bouton A", "A", 84, 64),
-  input("3ds_c_up", "C-Stick Haut", "C^", 64, 69),
-  input("3ds_c_left", "C-Stick Gauche", "C<", 56, 81),
-  input("3ds_c_right", "C-Stick Droite", "C>", 72, 81),
-  input("3ds_c_down", "C-Stick Bas", "Cv", 64, 93)
+  input("3ds_circle_up", "Stick Haut", "L^", 14.5, 23),
+  input("3ds_circle_left", "Stick Gauche", "L<", 9, 32),
+  input("3ds_circle_right", "Stick Droite", "L>", 20, 32),
+  input("3ds_circle_down", "Stick Bas", "Lv", 14.5, 40),
+  input("3ds_dpad_up", "Croix Haut", "D^", 14.5, 48),
+  input("3ds_dpad_left", "Croix Gauche", "D<", 9, 56.5),
+  input("3ds_dpad_right", "Croix Droite", "D>", 20, 56.5),
+  input("3ds_dpad_down", "Croix Bas", "Dv", 14.5, 65),
+  input("3ds_l", "L", "L", 12, 10),
+  input("3ds_r", "R", "R", 88, 10),
+  input("3ds_zl", "ZL", "ZL", 20, 10),
+  input("3ds_zr", "ZR", "ZR", 80, 10),
+  input("3ds_select", "Select", "Se", 79, 78),
+  input("3ds_start", "Start", "St", 79, 67),
+  input("3ds_home", "Home", "H", 50, 91),
+  input("3ds_y", "Bouton Y", "Y", 80.5, 39),
+  input("3ds_x", "Bouton X", "X", 85, 31),
+  input("3ds_b", "Bouton B", "B", 85, 47),
+  input("3ds_a", "Bouton A", "A", 90, 39),
+  input("3ds_c_up", "C-Stick Haut", "C^", 80, 18),
+  input("3ds_c_left", "C-Stick Gauche", "C<", 76, 22),
+  input("3ds_c_right", "C-Stick Droite", "C>", 84, 22),
+  input("3ds_c_down", "C-Stick Bas", "Cv", 80, 25)
 ];
 
 const controllerCatalog: Record<string, EmulatedControllerDefinition[]> = {
   dolphin: [
-    controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeInputs),
-    controller("wiimote", "Wiimote", "Wiimote seule", wiimoteInputs),
-    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiimoteNunchukInputs),
-    controller("classic_controller", "Wii Classic Controller", "Extension Classic Controller", classicInputs)
+    controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeImage, gamecubeInputs),
+    controller("wiimote", "Wiimote", "Wiimote seule", wiiNunchukImage, wiimoteInputs, "vertical"),
+    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiiNunchukImage, wiimoteNunchukInputs, "vertical"),
+    controller("classic_controller", "Wii Classic Controller", "Extension Classic Controller", classicWiiImage, classicInputs)
   ],
   eden: [
-    controller("switch_pro", "Pro Controller", "Manette Switch Pro", switchInputs),
-    controller("joycon_pair", "Joy-Con pair", "Deux Joy-Con en mode horizontal", switchInputs)
+    controller("switch_pro", "Pro Controller", "Manette Switch Pro", switchProImage, switchInputs),
+    controller("joycon_pair", "Joy-Con pair", "Deux Joy-Con en mode horizontal", switchProImage, switchInputs)
   ],
   pcsx2: [
-    controller("dualshock2", "DualShock 2", "Manette PlayStation 2", dualshockInputs)
+    controller("dualshock2", "DualShock 2", "Manette PlayStation 2", ps2Image, dualshockInputs)
   ],
   melonds: [
-    controller("nds", "Nintendo DS controls", "Boutons Nintendo DS", compactNintendoInputs)
+    controller("nds", "Nintendo DS controls", "Boutons Nintendo DS", dsImage, compactNintendoInputs)
   ],
   azahar: [
-    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", azaharInputs)
+    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", controller3dsImage, azaharInputs)
   ]
 };
 
@@ -559,11 +568,23 @@ export default function ControllerMappingPanel({
       setProfileName(matchingProfile.name);
       setDolphinSettings(matchingProfile.dolphinSettings ?? defaultDolphinSettings);
       setBindings(mergeBindingsForController(selectedController, matchingProfile.bindings));
+    } else {
+      setProfileName(`${selectedEmulator.name} - ${selectedController.label}`);
+      setDolphinSettings(defaultDolphinSettings);
+      setBindings(createBindings(selectedController));
     }
+    setListeningInputId(null);
+    setMessage(null);
   };
 
   const startListening = (inputId: string) => {
     const device = selectedPhysicalDeviceRef.current;
+    if (device.type === "saved") {
+      setListeningInputId(null);
+      setMessage("Rebranche cette manette puis relance un scan pour modifier ce profil.");
+      return;
+    }
+
     baselineSignalsRef.current =
       device.type === "gamepad" ? new Set(readGamepadSignals(device)) : new Set();
     setListeningInputId(inputId);
@@ -613,7 +634,7 @@ export default function ControllerMappingPanel({
         physicalDeviceLabel: selectedPhysicalDevice.label,
         emulatedControllerId: selectedController.id,
         emulatedDeviceLabel: selectedController.label,
-        dolphinSettings,
+        dolphinSettings: selectedEmulator.id === "dolphin" ? dolphinSettings : undefined,
         bindings
       };
 
@@ -723,8 +744,19 @@ export default function ControllerMappingPanel({
                 <small>{completion.done}/{completion.total} binds</small>
               </div>
 
-              <div className="controller-stage" aria-label={`Mapping ${selectedController.label}`}>
-                <div className="controller-shell" />
+              <div
+                className={`controller-stage ${
+                  selectedController.stageVariant === "vertical" ? "controller-stage-vertical" : ""
+                }`}
+                aria-label={`Mapping ${selectedController.label}`}
+              >
+                <img
+                  className="controller-image"
+                  src={selectedController.imageSrc}
+                  alt=""
+                  aria-hidden="true"
+                  draggable={false}
+                />
                 {selectedController.inputs.map((inputDefinition) => {
                   const boundValue = getBindingForInput(bindings, inputDefinition.label);
                   const isListening = listeningInputId === inputDefinition.id;
@@ -805,9 +837,11 @@ function controller(
   id: string,
   label: string,
   description: string,
-  inputs: EmulatedInputDefinition[]
+  imageSrc: string,
+  inputs: EmulatedInputDefinition[],
+  stageVariant: "default" | "vertical" = "default"
 ): EmulatedControllerDefinition {
-  return { id, label, description, inputs };
+  return { id, label, description, imageSrc, stageVariant, inputs };
 }
 
 function getCompatibleControllers(emulatorId: string) {

@@ -1,5 +1,5 @@
+use crate::controller_profile_writer::ControllerWriteResult;
 use crate::controller_profiles::ControllerProfile;
-use crate::dolphin_controller_writer::ControllerWriteResult;
 use crate::portable_paths::PortablePaths;
 use std::fs;
 use std::path::{Path, PathBuf};

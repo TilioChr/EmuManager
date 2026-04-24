@@ -1,5 +1,5 @@
+use crate::controller_profile_writer::ControllerWriteResult;
 use crate::controller_profiles::ControllerProfile;
-use crate::dolphin_controller_writer::ControllerWriteResult;
 use crate::portable_paths::PortablePaths;
 use std::fmt::Write as _;
 use std::fs;
@@ -193,13 +193,18 @@ pub fn apply_pcsx2_profile_to_install_dir(
 }
 
 fn apply_controls_to_ini(content: &mut String, profile: &ControllerProfile) -> String {
-    let sdl_index = pcsx2_sdl_index(profile);
+    let keyboard = is_keyboard_profile(profile);
+    let existing_sdl_index = if keyboard {
+        None
+    } else {
+        existing_pcsx2_sdl_index(content)
+    };
+    let sdl_index = existing_sdl_index.unwrap_or_else(|| pcsx2_sdl_index(profile));
     let mut debug = String::new();
     let _ = write!(
         debug,
-        "keyboard={} sdl_index={}",
-        is_keyboard_profile(profile),
-        sdl_index
+        "keyboard={} sdl_index={} existing_sdl_index={:?}",
+        keyboard, sdl_index, existing_sdl_index
     );
 
     set_ini_value(content, "InputSources", "Keyboard", "true");
@@ -413,6 +418,44 @@ fn pcsx2_sdl_index(profile: &ControllerProfile) -> i32 {
         .and_then(|device_id| device_id.strip_prefix("gamepad:"))
         .and_then(|index| index.parse::<i32>().ok())
         .unwrap_or(0)
+}
+
+fn existing_pcsx2_sdl_index(content: &str) -> Option<i32> {
+    let mut in_pad1 = false;
+    let mut fallback = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_pad1 = trimmed.eq_ignore_ascii_case("[Pad1]");
+            continue;
+        }
+
+        if let Some(index) = parse_pcsx2_sdl_index(trimmed) {
+            if in_pad1 {
+                return Some(index);
+            }
+            fallback.get_or_insert(index);
+        }
+    }
+
+    fallback
+}
+
+fn parse_pcsx2_sdl_index(line: &str) -> Option<i32> {
+    let value = line
+        .split_once('=')
+        .map(|(_, value)| value.trim())
+        .unwrap_or_else(|| line.trim());
+    let start = value.find("SDL-")?;
+    let rest = &value[start + 4..];
+    let digit_len = rest.bytes().take_while(u8::is_ascii_digit).count();
+
+    if digit_len == 0 || !rest[digit_len..].starts_with('/') {
+        return None;
+    }
+
+    rest[..digit_len].parse().ok()
 }
 
 fn log_pcsx2_controller(paths: &PortablePaths, message: &str) {
