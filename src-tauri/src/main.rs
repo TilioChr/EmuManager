@@ -8,6 +8,7 @@ mod emulator_installer;
 mod emulator_registry;
 mod game_launcher;
 mod local_library;
+mod melonds_controller_writer;
 mod platform_router;
 mod portable_paths;
 mod process_launcher;

@@ -27,6 +27,7 @@ pub fn apply_controller_profile(
 ) -> Result<ControllerWriteResult, String> {
     match profile.emulator_id.as_str() {
         "dolphin" => apply_dolphin_profile(paths, profile),
+        "melonds" => crate::melonds_controller_writer::apply_melonds_profile(paths, profile),
         _ => Err(format!(
             "Ecriture de profil non implementee pour {}",
             profile.emulator_id
@@ -727,7 +728,7 @@ fn normalize_physical_input(profile: &ControllerProfile, value: &str) -> String 
 
 fn normalize_keyboard_mouse_input(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
-        "enter" | "return" => "RETURN".to_string(),
+        "enter" | "return" | "numpad enter" => "RETURN".to_string(),
         "escape" | "esc" => "ESCAPE".to_string(),
         "space" | " " => "SPACE".to_string(),
         "tab" => "TAB".to_string(),

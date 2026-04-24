@@ -295,6 +295,7 @@ export default function ControllerMappingPanel({
     visiblePhysicalDevices.find((device) => device.id === selectedPhysicalDeviceId) ??
     visiblePhysicalDevices[0] ??
     keyboardDevice;
+  const supportsMouseBinding = selectedEmulator?.id === "dolphin";
 
   const selectedPhysicalDeviceRef = useRef(selectedPhysicalDevice);
 
@@ -414,7 +415,7 @@ export default function ControllerMappingPanel({
 
     if (device.type === "keyboard") {
       const targetInput = selectedController?.inputs.find((entry) => entry.id === listeningInputId);
-      const listensForIr = targetInput ? targetInput.label.startsWith("IR ") : false;
+      const listensForIr = supportsMouseBinding && targetInput ? targetInput.label.startsWith("IR ") : false;
       const handleKeyDown = (event: KeyboardEvent) => {
         if (event.repeat) {
           return;
@@ -441,14 +442,18 @@ export default function ControllerMappingPanel({
       const preventContextMenu = (event: MouseEvent) => event.preventDefault();
 
       window.addEventListener("keydown", handleKeyDown);
-      window.addEventListener("mousedown", handleMouseDown, true);
-      window.addEventListener("mousemove", handleMouseMove, true);
-      window.addEventListener("contextmenu", preventContextMenu, true);
+      if (supportsMouseBinding) {
+        window.addEventListener("mousedown", handleMouseDown, true);
+        window.addEventListener("mousemove", handleMouseMove, true);
+        window.addEventListener("contextmenu", preventContextMenu, true);
+      }
       return () => {
         window.removeEventListener("keydown", handleKeyDown);
-        window.removeEventListener("mousedown", handleMouseDown, true);
-        window.removeEventListener("mousemove", handleMouseMove, true);
-        window.removeEventListener("contextmenu", preventContextMenu, true);
+        if (supportsMouseBinding) {
+          window.removeEventListener("mousedown", handleMouseDown, true);
+          window.removeEventListener("mousemove", handleMouseMove, true);
+          window.removeEventListener("contextmenu", preventContextMenu, true);
+        }
       };
     }
 
@@ -477,7 +482,7 @@ export default function ControllerMappingPanel({
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [applyPhysicalInput, listeningInputId, selectedController]);
+  }, [applyPhysicalInput, listeningInputId, selectedController, supportsMouseBinding]);
 
   const handleControllerChange = (controllerId: string) => {
     if (!selectedEmulator) {
@@ -539,7 +544,9 @@ export default function ControllerMappingPanel({
     setMessage(
       device.type === "gamepad"
         ? "Appuie sur le bouton ou bouge le stick a associer."
-        : "Appuie sur une touche, clique, ou bouge la souris pour l'IR."
+        : supportsMouseBinding
+          ? "Appuie sur une touche, clique, ou bouge la souris pour l'IR."
+          : "Appuie sur une touche a associer."
     );
   };
 
@@ -909,6 +916,27 @@ function readNextGamepadInput(device: PhysicalDevice, baselineSignals: Set<strin
 }
 
 function keyboardEventToInput(event: KeyboardEvent) {
+  if (event.code === "NumpadEnter") {
+    return "Numpad Enter";
+  }
+  if (event.code === "NumpadMultiply") {
+    return "Numpad Multiply";
+  }
+  if (event.code === "NumpadAdd") {
+    return "Numpad Add";
+  }
+  if (event.code === "NumpadSubtract") {
+    return "Numpad Subtract";
+  }
+  if (event.code === "NumpadDecimal") {
+    return "Numpad Decimal";
+  }
+  if (event.code === "NumpadDivide") {
+    return "Numpad Divide";
+  }
+  if (/^Numpad[0-9]$/.test(event.code)) {
+    return `Numpad ${event.code.slice(-1)}`;
+  }
   if (event.code === "ArrowUp") {
     return "DPad Up";
   }
@@ -926,9 +954,6 @@ function keyboardEventToInput(event: KeyboardEvent) {
   }
   if (event.code === "Enter") {
     return "Enter";
-  }
-  if (event.code === "NumpadMultiply") {
-    return "*";
   }
 
   return event.key.length === 1 ? event.key.toUpperCase() : event.key;
