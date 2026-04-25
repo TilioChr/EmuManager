@@ -567,18 +567,17 @@ ol {
 .controller-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  min-height: 330px;
   border-radius: 14px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
 }
 
-.controller-stage-vertical {
-  aspect-ratio: 10 / 14;
-  min-height: 520px;
-  max-height: 90vh;
+.controller-map-canvas {
+  position: relative;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .controller-image {
@@ -700,9 +699,6 @@ ol {
     grid-template-columns: 1fr;
   }
 
-  .controller-stage {
-    min-height: 300px;
-  }
 }
 
 @media (max-width: 700px) {
@@ -736,11 +732,6 @@ ol {
 
   .mapping-stage-heading {
     flex-direction: column;
-  }
-
-  .controller-stage {
-    min-height: 440px;
-    aspect-ratio: 3 / 4;
   }
 
   .mapping-hotspot {

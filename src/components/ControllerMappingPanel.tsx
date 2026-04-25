@@ -36,6 +36,7 @@ interface EmulatedInputDefinition {
   shortLabel: string;
   x: number;
   y: number;
+  bindingAliases?: string[];
 }
 
 interface EmulatedControllerDefinition {
@@ -43,8 +44,16 @@ interface EmulatedControllerDefinition {
   label: string;
   description: string;
   imageSrc: string;
-  stageVariant?: "default" | "vertical";
+  stageAspectRatio: string;
+  stageMinWidth?: string;
+  stageMaxWidth?: string;
   inputs: EmulatedInputDefinition[];
+}
+
+interface ControllerStageSizing {
+  aspectRatio: string;
+  minWidth?: string;
+  maxWidth?: string;
 }
 
 const keyboardDevice: PhysicalDevice = {
@@ -85,6 +94,11 @@ const gamepadAxes = [
   { axis: 3, negative: "Right Stick Up", positive: "Right Stick Down" }
 ];
 
+const controllerStage = {
+  default: { aspectRatio: "16 / 9", minWidth: "620px" },
+  vertical: { aspectRatio: "10 / 14", minWidth: "430px", maxWidth: "520px" }
+} satisfies Record<string, ControllerStageSizing>;
+
 const gamecubeInputs: EmulatedInputDefinition[] = [
   input("gc_stick_up", "Stick Haut", "L^", 28, 28),
   input("gc_stick_left", "Stick Gauche", "L<", 20, 39),
@@ -109,35 +123,47 @@ const gamecubeInputs: EmulatedInputDefinition[] = [
 ];
 
 const wiimoteInputs: EmulatedInputDefinition[] = [
-  input("wm_dpad_up", "Croix Haut", "D^", 67, 13),
-  input("wm_dpad_left", "Croix Gauche", "D<", 62, 19),
-  input("wm_dpad_right", "Croix Droite", "D>", 71.5, 19),
-  input("wm_dpad_down", "Croix Bas", "Dv", 67, 25),
-  input("wm_a", "Bouton A", "A", 67, 33),
-  input("wm_b", "Bouton B", "B", 77, 33),
-  input("wm_minus", "Minus", "-", 61, 48.5),
-  input("wm_plus", "Plus", "+", 73, 48.5),
-  input("wm_home", "Home", "H", 67, 48.5),
-  input("wm_one", "Bouton 1", "1", 67, 72),
-  input("wm_two", "Bouton 2", "2", 67, 80),
-  input("wm_ir_up", "IR Haut", "I^", 51, 4),
-  input("wm_ir_left", "IR Gauche", "I<", 46, 9),
-  input("wm_ir_right", "IR Droite", "I>", 56, 9),
-  input("wm_ir_down", "IR Bas", "Iv", 51, 14),
-  input("wm_ir_recenter", "IR Recentrer", "IR", 38, 6),
-  input("wm_shake_x", "Secouer X", "SX", 85, 60),
-  input("wm_shake_y", "Secouer Y", "SY", 95, 60),
-  input("wm_shake_z", "Secouer Z", "SZ", 90, 54)
+  input("wm_dpad_up", "Croix Haut", "D^", 80, 15),
+  input("wm_dpad_left", "Croix Gauche", "D<", 68, 21),
+  input("wm_dpad_right", "Croix Droite", "D>", 93, 21),
+  input("wm_dpad_down", "Croix Bas", "Dv", 80, 27),
+
+  input("wm_a", "Bouton A", "A", 80, 34),
+  input("wm_b", "Bouton B", "B", 100, 34),
+
+  input("wm_minus", "Minus", "-", 70, 48.5),
+  input("wm_plus", "Plus", "+", 90, 48.5),
+  input("wm_home", "Home", "H", 80, 48.5),
+
+  input("wm_one", "Bouton 1", "1", 80, 71),
+  input("wm_two", "Bouton 2", "2", 80, 78),
+
+  input("wm_ir_up", "IR Haut", "I^", 48, 78),
+  input("wm_ir_left", "IR Gauche", "I<", 37, 84),
+  input("wm_ir_right", "IR Droite", "I>", 59, 84),
+  input("wm_ir_down", "IR Bas", "Iv", 48, 90),
+  input("wm_ir_recenter", "IR Recentrer", "IR", 30, 94),
+
+  input("wm_shake", "Secouer Wiimote", "SW", 89, 60, [
+    "Secouer X",
+    "Secouer Y",
+    "Secouer Z"
+  ])
 ];
 
 const wiimoteNunchukInputs: EmulatedInputDefinition[] = [
   ...wiimoteInputs,
-  input("nunchuk_up", "Nunchuk Haut", "N^", 42, 20),
-  input("nunchuk_left", "Nunchuk Gauche", "N<", 36, 27),
+  input("nunchuk_up", "Nunchuk Haut", "N^", 37, 20),
+  input("nunchuk_left", "Nunchuk Gauche", "N<", 27, 27),
   input("nunchuk_right", "Nunchuk Droite", "N>", 48, 27),
-  input("nunchuk_down", "Nunchuk Bas", "Nv", 42, 35),
-  input("nunchuk_c", "Nunchuk C", "C", 30, 18),
-  input("nunchuk_z", "Nunchuk Z", "Z", 26, 25)
+  input("nunchuk_down", "Nunchuk Bas", "Nv", 37, 34),
+  input("nunchuk_c", "Nunchuk C", "C", 13, 18),
+  input("nunchuk_z", "Nunchuk Z", "Z", 8, 26),
+  input("nunchuk_shake", "Secouer Nunchuk", "SN", 20, 61, [
+    "Nunchuk Secouer X",
+    "Nunchuk Secouer Y",
+    "Nunchuk Secouer Z"
+  ])
 ];
 
 const classicInputs: EmulatedInputDefinition[] = [
@@ -261,23 +287,22 @@ const azaharInputs: EmulatedInputDefinition[] = [
 
 const controllerCatalog: Record<string, EmulatedControllerDefinition[]> = {
   dolphin: [
-    controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeImage, gamecubeInputs),
-    controller("wiimote", "Wiimote", "Wiimote seule", wiiNunchukImage, wiimoteInputs, "vertical"),
-    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiiNunchukImage, wiimoteNunchukInputs, "vertical"),
-    controller("classic_controller", "Wii Classic Controller", "Extension Classic Controller", classicWiiImage, classicInputs)
+    controller("gamecube", "GameCube controller", "Ports manette GameCube de Dolphin", gamecubeImage, gamecubeInputs, controllerStage.default),
+    controller("wiimote", "Wiimote", "Wiimote seule", wiiNunchukImage, wiimoteInputs, controllerStage.vertical),
+    controller("wiimote_nunchuk", "Wiimote + Nunchuk", "Wiimote avec extension Nunchuk", wiiNunchukImage, wiimoteNunchukInputs, controllerStage.vertical),
+    controller("classic_controller", "Wii Classic Controller", "Extension Classic Controller", classicWiiImage, classicInputs, controllerStage.default)
   ],
   eden: [
-    controller("switch_pro", "Pro Controller", "Manette Switch Pro", switchProImage, switchInputs),
-    controller("joycon_pair", "Joy-Con pair", "Deux Joy-Con en mode horizontal", switchProImage, switchInputs)
+    controller("switch_pro", "Pro Controller", "Manette Switch Pro", switchProImage, switchInputs, controllerStage.default)
   ],
   pcsx2: [
-    controller("dualshock2", "DualShock 2", "Manette PlayStation 2", ps2Image, dualshockInputs)
+    controller("dualshock2", "DualShock 2", "Manette PlayStation 2", ps2Image, dualshockInputs, controllerStage.default)
   ],
   melonds: [
-    controller("nds", "Nintendo DS controls", "Boutons Nintendo DS", dsImage, compactNintendoInputs)
+    controller("nds", "Nintendo DS controls", "Boutons Nintendo DS", dsImage, compactNintendoInputs, controllerStage.default)
   ],
   azahar: [
-    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", controller3dsImage, azaharInputs)
+    controller("3ds", "Nintendo 3DS controls", "Boutons Nintendo 3DS", controller3dsImage, azaharInputs, controllerStage.default)
   ]
 };
 
@@ -413,7 +438,7 @@ export default function ControllerMappingPanel({
     }
 
     const done = selectedController.inputs.filter((inputDefinition) =>
-      Boolean(getBindingForInput(bindings, inputDefinition.label))
+      Boolean(getBindingForInput(bindings, inputDefinition.label, inputDefinition.bindingAliases))
     ).length;
 
     return {
@@ -434,7 +459,9 @@ export default function ControllerMappingPanel({
         return;
       }
 
-      setBindings((current) => upsertBinding(current, targetInput.label, physicalInput));
+      setBindings((current) =>
+        upsertBinding(current, targetInput.label, physicalInput, targetInput.bindingAliases)
+      );
       setListeningInputId(null);
       setMessage(`${targetInput.label} associe a ${physicalInput}.`);
     },
@@ -635,7 +662,7 @@ export default function ControllerMappingPanel({
         emulatedControllerId: selectedController.id,
         emulatedDeviceLabel: selectedController.label,
         dolphinSettings: selectedEmulator.id === "dolphin" ? dolphinSettings : undefined,
-        bindings
+        bindings: canonicalBindingsForController(selectedController, bindings)
       };
 
       const result = await onSaveProfile(profile);
@@ -744,42 +771,50 @@ export default function ControllerMappingPanel({
                 <small>{completion.done}/{completion.total} binds</small>
               </div>
 
-              <div
-                className={`controller-stage ${
-                  selectedController.stageVariant === "vertical" ? "controller-stage-vertical" : ""
-                }`}
-                aria-label={`Mapping ${selectedController.label}`}
-              >
-                <img
-                  className="controller-image"
-                  src={selectedController.imageSrc}
-                  alt=""
-                  aria-hidden="true"
-                  draggable={false}
-                />
-                {selectedController.inputs.map((inputDefinition) => {
-                  const boundValue = getBindingForInput(bindings, inputDefinition.label);
-                  const isListening = listeningInputId === inputDefinition.id;
+              <div className="controller-stage" aria-label={`Mapping ${selectedController.label}`}>
+                <div
+                  className="controller-map-canvas"
+                  style={{
+                    aspectRatio: selectedController.stageAspectRatio,
+                    minWidth: selectedController.stageMinWidth,
+                    maxWidth: selectedController.stageMaxWidth
+                  }}
+                >
+                  <img
+                    className="controller-image"
+                    src={selectedController.imageSrc}
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                  />
+                  {selectedController.inputs.map((inputDefinition) => {
+                    const boundValue = getBindingForInput(
+                      bindings,
+                      inputDefinition.label,
+                      inputDefinition.bindingAliases
+                    );
+                    const isListening = listeningInputId === inputDefinition.id;
 
-                  return (
-                    <button
-                      key={inputDefinition.id}
-                      type="button"
-                      className={`mapping-hotspot ${isListening ? "mapping-hotspot-listening" : ""} ${
-                        boundValue ? "mapping-hotspot-bound" : ""
-                      }`}
-                      style={{
-                        left: `${inputDefinition.x}%`,
-                        top: `${inputDefinition.y}%`
-                      }}
-                      onClick={() => startListening(inputDefinition.id)}
-                      title={`${inputDefinition.label}${boundValue ? ` -> ${boundValue}` : ""}`}
-                    >
-                      <span>{inputDefinition.shortLabel}</span>
-                      <small>{boundValue || "..."}</small>
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        key={inputDefinition.id}
+                        type="button"
+                        className={`mapping-hotspot ${isListening ? "mapping-hotspot-listening" : ""} ${
+                          boundValue ? "mapping-hotspot-bound" : ""
+                        }`}
+                        style={{
+                          left: `${inputDefinition.x}%`,
+                          top: `${inputDefinition.y}%`
+                        }}
+                        onClick={() => startListening(inputDefinition.id)}
+                        title={`${inputDefinition.label}${boundValue ? ` -> ${boundValue}` : ""}`}
+                      >
+                        <span>{inputDefinition.shortLabel}</span>
+                        <small>{boundValue || "..."}</small>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -828,8 +863,13 @@ function input(
   label: string,
   shortLabel: string,
   x: number,
-  y: number
+  y: number,
+  bindingAliases?: string[]
 ): EmulatedInputDefinition {
+  if (bindingAliases?.length) {
+    return { id, label, shortLabel, x, y, bindingAliases };
+  }
+
   return { id, label, shortLabel, x, y };
 }
 
@@ -839,9 +879,18 @@ function controller(
   description: string,
   imageSrc: string,
   inputs: EmulatedInputDefinition[],
-  stageVariant: "default" | "vertical" = "default"
+  stage: ControllerStageSizing
 ): EmulatedControllerDefinition {
-  return { id, label, description, imageSrc, stageVariant, inputs };
+  return {
+    id,
+    label,
+    description,
+    imageSrc,
+    stageAspectRatio: stage.aspectRatio,
+    stageMinWidth: stage.minWidth,
+    stageMaxWidth: stage.maxWidth,
+    inputs
+  };
 }
 
 function getCompatibleControllers(emulatorId: string) {
@@ -870,41 +919,83 @@ function createBindings(controllerDefinition: EmulatedControllerDefinition) {
   }));
 }
 
+function canonicalBindingsForController(
+  controllerDefinition: EmulatedControllerDefinition,
+  bindings: ControllerBinding[]
+) {
+  return controllerDefinition.inputs.map((inputDefinition) => ({
+    physicalInput: getBindingForInput(bindings, inputDefinition.label, inputDefinition.bindingAliases),
+    emulatedInput: inputDefinition.label
+  }));
+}
+
 function mergeBindingsForController(
   controllerDefinition: EmulatedControllerDefinition,
   storedBindings: ControllerBinding[]
 ) {
   const storedByInput = new Map(
-    storedBindings.map((binding) => [binding.emulatedInput.toLocaleLowerCase(), binding.physicalInput])
+    storedBindings.map((binding) => [normalizeInputLabel(binding.emulatedInput), binding.physicalInput])
   );
 
-  return controllerDefinition.inputs.map((inputDefinition) => ({
-    emulatedInput: inputDefinition.label,
-    physicalInput: storedByInput.get(inputDefinition.label.toLocaleLowerCase()) ?? ""
-  }));
+  return controllerDefinition.inputs.map((inputDefinition) => {
+    const physicalInput =
+      inputLabelCandidates(inputDefinition)
+        .map((candidate) => storedByInput.get(normalizeInputLabel(candidate)))
+        .find((value): value is string => Boolean(value)) ?? "";
+
+    return {
+      emulatedInput: inputDefinition.label,
+      physicalInput
+    };
+  });
 }
 
-function getBindingForInput(bindings: ControllerBinding[], emulatedInput: string) {
+function getBindingForInput(bindings: ControllerBinding[], emulatedInput: string, aliases: string[] = []) {
+  const candidates = [emulatedInput, ...aliases].map(normalizeInputLabel);
+
   return (
-    bindings.find((binding) => binding.emulatedInput.toLocaleLowerCase() === emulatedInput.toLocaleLowerCase())
-      ?.physicalInput ?? ""
+    bindings.find((binding) => candidates.includes(normalizeInputLabel(binding.emulatedInput)))?.physicalInput ?? ""
   );
 }
 
-function upsertBinding(bindings: ControllerBinding[], emulatedInput: string, physicalInput: string) {
-  const hasBinding = bindings.some(
-    (binding) => binding.emulatedInput.toLocaleLowerCase() === emulatedInput.toLocaleLowerCase()
+function inputLabelCandidates(inputDefinition: EmulatedInputDefinition) {
+  return [inputDefinition.label, ...(inputDefinition.bindingAliases ?? [])];
+}
+
+function normalizeInputLabel(value: string) {
+  return value.toLocaleLowerCase();
+}
+
+function upsertBinding(
+  bindings: ControllerBinding[],
+  emulatedInput: string,
+  physicalInput: string,
+  aliases: string[] = []
+) {
+  const candidates = [emulatedInput, ...aliases].map(normalizeInputLabel);
+  const hasBinding = bindings.some((binding) =>
+    candidates.includes(normalizeInputLabel(binding.emulatedInput))
   );
 
   if (!hasBinding) {
     return [...bindings, { emulatedInput, physicalInput }];
   }
 
-  return bindings.map((binding) =>
-    binding.emulatedInput.toLocaleLowerCase() === emulatedInput.toLocaleLowerCase()
-      ? { ...binding, physicalInput }
-      : binding
-  );
+  let updated = false;
+
+  return bindings.reduce<ControllerBinding[]>((nextBindings, binding) => {
+    if (!candidates.includes(normalizeInputLabel(binding.emulatedInput))) {
+      nextBindings.push(binding);
+      return nextBindings;
+    }
+
+    if (!updated) {
+      nextBindings.push({ emulatedInput, physicalInput });
+      updated = true;
+    }
+
+    return nextBindings;
+  }, []);
 }
 
 function findMatchingProfile(
