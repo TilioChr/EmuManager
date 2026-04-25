@@ -49,17 +49,46 @@ pub async fn download_rom_to_library(
 
     let safe_file_name = sanitize_file_name(&request.file_name);
     let destination = target_dir.join(&safe_file_name);
+    let partial_destination = target_dir.join(format!("{}.part", safe_file_name));
 
-    let bytes_written = download_file(
+    if partial_destination.exists() {
+        tokio::fs::remove_file(&partial_destination)
+            .await
+            .map_err(|error| {
+                format!(
+                    "Suppression du téléchargement partiel impossible: {}",
+                    error
+                )
+            })?;
+    }
+
+    let bytes_written = match download_file(
         app,
         &request.url,
-        &destination,
+        &partial_destination,
         request.bearer_token.as_deref(),
         &request.download_id,
         &safe_file_name,
         request.expected_total_bytes,
     )
-    .await?;
+    .await
+    {
+        Ok(bytes_written) => bytes_written,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&partial_destination).await;
+            return Err(error);
+        }
+    };
+
+    if destination.exists() {
+        tokio::fs::remove_file(&destination)
+            .await
+            .map_err(|error| format!("Remplacement de la ROM existante impossible: {}", error))?;
+    }
+
+    tokio::fs::rename(&partial_destination, &destination)
+        .await
+        .map_err(|error| format!("Finalisation du téléchargement impossible: {}", error))?;
 
     Ok(DownloadResult {
         file_path: destination.to_string_lossy().to_string(),

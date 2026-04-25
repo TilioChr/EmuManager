@@ -1,11 +1,13 @@
 use crate::emulator_registry::{built_in_emulators, EmulatorDefinition};
 use crate::portable_paths::PortablePaths;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::Serialize;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 use zip::ZipArchive;
 
@@ -16,6 +18,16 @@ pub struct InstallResult {
     pub install_path: String,
     pub executable_path: String,
     pub archive_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmulatorInstallProgressPayload {
+    pub emulator_id: String,
+    pub file_name: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: f64,
 }
 
 pub fn is_emulator_installed(paths: &PortablePaths, emulator_id: &str) -> bool {
@@ -34,7 +46,11 @@ pub fn get_installed_emulator_version(
     read_windows_exe_version(&executable).map(Some)
 }
 
-pub async fn install_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<InstallResult, String> {
+pub async fn install_emulator(
+    app: &AppHandle,
+    paths: &PortablePaths,
+    emulator_id: &str,
+) -> Result<InstallResult, String> {
     let definition = get_emulator_definition(emulator_id)
         .ok_or_else(|| format!("Émulateur non supporté: {}", emulator_id))?;
 
@@ -49,19 +65,35 @@ pub async fn install_emulator(paths: &PortablePaths, emulator_id: &str) -> Resul
     let emu_root = PathBuf::from(&paths.emu);
     let install_dir = emu_root.join(definition.install_dir_name);
     let temp_dir = PathBuf::from(&paths.data).join("downloads");
-    let archive_ext = if archive_format.eq_ignore_ascii_case("zip") { "zip" } else { "7z" };
+    let archive_ext = if archive_format.eq_ignore_ascii_case("zip") {
+        "zip"
+    } else {
+        "7z"
+    };
     let archive_path = temp_dir.join(format!("{}-latest.{}", definition.id, archive_ext));
+    let archive_file_name = archive_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("{}-latest.{}", definition.id, archive_ext));
 
     fs::create_dir_all(&install_dir)
         .map_err(|error| format!("Impossible de créer le dossier d'installation: {}", error))?;
     fs::create_dir_all(&temp_dir)
         .map_err(|error| format!("Impossible de créer le dossier temporaire: {}", error))?;
 
-    download_file(download_url, &archive_path).await?;
+    download_file(
+        app,
+        download_url,
+        &archive_path,
+        definition.id,
+        &archive_file_name,
+    )
+    .await?;
 
     if install_dir.exists() {
-        fs::remove_dir_all(&install_dir)
-            .map_err(|error| format!("Impossible de nettoyer l'ancienne installation: {}", error))?;
+        fs::remove_dir_all(&install_dir).map_err(|error| {
+            format!("Impossible de nettoyer l'ancienne installation: {}", error)
+        })?;
     }
 
     fs::create_dir_all(&install_dir)
@@ -74,8 +106,8 @@ pub async fn install_emulator(paths: &PortablePaths, emulator_id: &str) -> Resul
         other => return Err(format!("Format d'archive non supporté: {}", other)),
     }
 
-    let executable = resolve_executable_in_install_dir(&install_dir, &definition)
-        .ok_or_else(|| {
+    let executable =
+        resolve_executable_in_install_dir(&install_dir, &definition).ok_or_else(|| {
             format!(
                 "Installation terminée mais exécutable introuvable pour {}",
                 definition.name
@@ -90,7 +122,10 @@ pub async fn install_emulator(paths: &PortablePaths, emulator_id: &str) -> Resul
     })
 }
 
-pub fn resolve_emulator_executable(paths: &PortablePaths, emulator_id: &str) -> Result<PathBuf, String> {
+pub fn resolve_emulator_executable(
+    paths: &PortablePaths,
+    emulator_id: &str,
+) -> Result<PathBuf, String> {
     let definition = get_emulator_definition(emulator_id)
         .ok_or_else(|| format!("Émulateur non supporté: {}", emulator_id))?;
 
@@ -139,7 +174,13 @@ fn read_windows_exe_version(executable: &Path) -> Result<String, String> {
     Ok(stdout)
 }
 
-async fn download_file(url: &str, destination: &Path) -> Result<(), String> {
+async fn download_file(
+    app: &AppHandle,
+    url: &str,
+    destination: &Path,
+    emulator_id: &str,
+    file_name: &str,
+) -> Result<(), String> {
     let client = Client::new();
     let response = client
         .get(url)
@@ -148,34 +189,117 @@ async fn download_file(url: &str, destination: &Path) -> Result<(), String> {
         .map_err(|error| format!("Téléchargement impossible: {}", error))?;
 
     if !response.status().is_success() {
-        return Err(format!("Téléchargement échoué avec le statut {}", response.status()));
+        return Err(format!(
+            "Téléchargement échoué avec le statut {}",
+            response.status()
+        ));
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("Lecture du téléchargement impossible: {}", error))?;
+    let total_bytes = response.content_length();
+    let mut stream = response.bytes_stream();
 
     let mut file = tokio::fs::File::create(destination)
         .await
         .map_err(|error| format!("Création du fichier temporaire impossible: {}", error))?;
 
-    file.write_all(&bytes)
-        .await
-        .map_err(|error| format!("Écriture du fichier temporaire impossible: {}", error))?;
+    let mut downloaded_bytes: u64 = 0;
+
+    emit_install_progress(
+        app,
+        emulator_id,
+        file_name,
+        downloaded_bytes,
+        total_bytes,
+        0.0,
+    )?;
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result
+            .map_err(|error| format!("Lecture du téléchargement impossible: {}", error))?;
+
+        file.write_all(&chunk)
+            .await
+            .map_err(|error| format!("Écriture du fichier temporaire impossible: {}", error))?;
+
+        downloaded_bytes += chunk.len() as u64;
+
+        let percent = if let Some(total) = total_bytes {
+            if total > 0 {
+                ((downloaded_bytes as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        emit_install_progress(
+            app,
+            emulator_id,
+            file_name,
+            downloaded_bytes,
+            total_bytes,
+            percent,
+        )?;
+    }
 
     file.flush()
         .await
         .map_err(|error| format!("Flush du fichier temporaire impossible: {}", error))?;
 
+    emit_install_progress(
+        app,
+        emulator_id,
+        file_name,
+        downloaded_bytes,
+        total_bytes,
+        100.0,
+    )?;
+    app.emit(
+        "emulator-install-complete",
+        EmulatorInstallProgressPayload {
+            emulator_id: emulator_id.to_string(),
+            file_name: file_name.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            percent: 100.0,
+        },
+    )
+    .map_err(|error| format!("Impossible d'emettre la fin d'installation: {}", error))?;
+
     Ok(())
+}
+
+fn emit_install_progress(
+    app: &AppHandle,
+    emulator_id: &str,
+    file_name: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percent: f64,
+) -> Result<(), String> {
+    app.emit(
+        "emulator-install-progress",
+        EmulatorInstallProgressPayload {
+            emulator_id: emulator_id.to_string(),
+            file_name: file_name.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            percent,
+        },
+    )
+    .map_err(|error| {
+        format!(
+            "Impossible d'emettre la progression d'installation: {}",
+            error
+        )
+    })
 }
 
 fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
     let file = fs::File::open(archive_path)
         .map_err(|error| format!("Impossible d'ouvrir l'archive zip: {}", error))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| format!("Zip invalide: {}", error))?;
+    let mut archive = ZipArchive::new(file).map_err(|error| format!("Zip invalide: {}", error))?;
 
     for index in 0..archive.len() {
         let mut entry = archive
@@ -196,8 +320,9 @@ fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
         }
 
         if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Impossible de créer le dossier parent extrait: {}", error))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Impossible de créer le dossier parent extrait: {}", error)
+            })?;
         }
 
         let mut outfile = fs::File::create(&out_path)
@@ -210,7 +335,10 @@ fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_executable_in_install_dir(install_dir: &Path, definition: &EmulatorDefinition) -> Option<PathBuf> {
+fn resolve_executable_in_install_dir(
+    install_dir: &Path,
+    definition: &EmulatorDefinition,
+) -> Option<PathBuf> {
     let direct = install_dir.join(definition.executable_rel_path);
     if direct.exists() {
         return Some(direct);

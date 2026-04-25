@@ -222,12 +222,14 @@ fn guess_platform_from_parent_folder(root: &Path, file_path: &Path) -> Option<St
     let raw = first.to_string_lossy().to_ascii_lowercase();
 
     Some(match raw.as_str() {
-        "wii" => "Wii".to_string(),
-        "gamecube" | "gc" => "GameCube".to_string(),
+        "wii" | "nintendo-wii" => "Wii".to_string(),
+        "gamecube" | "game-cube" | "gc" | "nintendo-gamecube" | "nintendo-game-cube" => {
+            "GameCube".to_string()
+        }
         "gamecube-wii" | "wii-gamecube" => "GameCube / Wii".to_string(),
-        "nds" | "ds" => "Nintendo DS".to_string(),
-        "3ds" => "Nintendo 3DS".to_string(),
-        "switch" | "nsw" => "Nintendo Switch".to_string(),
+        "nds" | "ds" | "nintendo-ds" | "nintendo-nds" => "Nintendo DS".to_string(),
+        "3ds" | "nintendo-3ds" => "Nintendo 3DS".to_string(),
+        "switch" | "nsw" | "nintendo-switch" => "Nintendo Switch".to_string(),
         "ps2" => "PS2".to_string(),
         "psp" => "PSP".to_string(),
         "ps1" | "psx" | "playstation" => "PlayStation".to_string(),

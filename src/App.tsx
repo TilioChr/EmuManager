@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import LibraryPanel from "./components/LibraryPanel";
@@ -46,6 +46,14 @@ interface DownloadProgressPayload {
   percent: number;
 }
 
+interface EmulatorInstallProgressPayload {
+  emulatorId: string;
+  fileName: string;
+  downloadedBytes: number;
+  totalBytes?: number;
+  percent: number;
+}
+
 interface InstalledVersionMap {
   versions: Record<string, string>;
 }
@@ -69,12 +77,21 @@ export default function App() {
   } | null>(null);
 
   const [config, setConfig] = useState<AppConfig>({ installedEmulators: [] });
+  const configRef = useRef(config);
   const [rommSession, setRommSession] = useState<RommSession | null>(null);
-  const [installingId, setInstallingId] = useState<string | null>(null);
+  const [installProgressById, setInstallProgressById] = useState<Record<string, number>>({});
+  const installProgressRef = useRef(installProgressById);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
-  const [downloadingGameId, setDownloadingGameId] = useState<string | null>(null);
-  const [downloadPercent, setDownloadPercent] = useState(0);
+  const [downloadProgressById, setDownloadProgressById] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  useEffect(() => {
+    installProgressRef.current = installProgressById;
+  }, [installProgressById]);
 
   const refreshSaveSyncStatuses = async (root: string, roms: LocalRomEntry[]) => {
     const statuses = await invoke<SaveSyncStatus[]>("get_save_sync_statuses_command", {
@@ -202,28 +219,73 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let unlistenProgress: UnlistenFn | null = null;
-    let unlistenComplete: UnlistenFn | null = null;
+    let unlistenRomProgress: UnlistenFn | null = null;
+    let unlistenRomComplete: UnlistenFn | null = null;
+    let unlistenInstallProgress: UnlistenFn | null = null;
+    let unlistenInstallComplete: UnlistenFn | null = null;
 
     const setupListeners = async () => {
-      unlistenProgress = await listen<DownloadProgressPayload>("rom-download-progress", (event) => {
+      unlistenRomProgress = await listen<DownloadProgressPayload>("rom-download-progress", (event) => {
         const payload = event.payload;
-        setDownloadPercent(payload.percent ?? 0);
+        setDownloadProgressById((previous) => ({
+          ...previous,
+          [payload.downloadId]: normalizeDownloadPercent(payload.percent)
+        }));
       });
 
-      unlistenComplete = await listen<DownloadProgressPayload>("rom-download-complete", () => {
-        setDownloadPercent(100);
+      unlistenRomComplete = await listen<DownloadProgressPayload>("rom-download-complete", (event) => {
+        const payload = event.payload;
+        setDownloadProgressById((previous) => ({
+          ...previous,
+          [payload.downloadId]: 100
+        }));
       });
+
+      unlistenInstallProgress = await listen<EmulatorInstallProgressPayload>(
+        "emulator-install-progress",
+        (event) => {
+          const payload = event.payload;
+          setInstallProgressById((previous) => {
+            const next = {
+              ...previous,
+              [payload.emulatorId]: normalizeDownloadPercent(payload.percent)
+            };
+            installProgressRef.current = next;
+            return next;
+          });
+        }
+      );
+
+      unlistenInstallComplete = await listen<EmulatorInstallProgressPayload>(
+        "emulator-install-complete",
+        (event) => {
+          const payload = event.payload;
+          setInstallProgressById((previous) => {
+            const next = {
+              ...previous,
+              [payload.emulatorId]: 100
+            };
+            installProgressRef.current = next;
+            return next;
+          });
+        }
+      );
     };
 
     void setupListeners();
 
     return () => {
-      if (unlistenProgress) {
-        unlistenProgress();
+      if (unlistenRomProgress) {
+        unlistenRomProgress();
       }
-      if (unlistenComplete) {
-        unlistenComplete();
+      if (unlistenRomComplete) {
+        unlistenRomComplete();
+      }
+      if (unlistenInstallProgress) {
+        unlistenInstallProgress();
+      }
+      if (unlistenInstallComplete) {
+        unlistenInstallComplete();
       }
     };
   }, []);
@@ -239,11 +301,13 @@ export default function App() {
     null;
 
   const persistConfig = async (nextConfig: AppConfig) => {
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+
     await invoke("save_app_config", {
       root: paths.root,
       config: nextConfig
     });
-    setConfig(nextConfig);
   };
 
   const saveControllerProfile = async (profile: ControllerProfile) => {
@@ -257,9 +321,9 @@ export default function App() {
   };
 
   const removeInstalledFlag = async (id: string) => {
-    const nextInstalledIds = config.installedEmulators.filter((entry) => entry !== id);
+    const nextInstalledIds = configRef.current.installedEmulators.filter((entry) => entry !== id);
     const nextConfig: AppConfig = {
-      ...config,
+      ...configRef.current,
       installedEmulators: nextInstalledIds
     };
 
@@ -301,8 +365,17 @@ export default function App() {
   };
 
   const installSelectedEmulator = async (id: string) => {
+    if (id in installProgressRef.current) {
+      return;
+    }
+
     try {
-      setInstallingId(id);
+      const initialProgress = {
+        ...installProgressRef.current,
+        [id]: 0
+      };
+      installProgressRef.current = initialProgress;
+      setInstallProgressById(initialProgress);
       setGeneralMessage(`Downloading and installing ${id}...`);
 
       const result = await invoke<InstallResult>("install_emulator_command", {
@@ -310,24 +383,24 @@ export default function App() {
         emulatorId: id
       });
 
-      const nextInstalledIds = Array.from(new Set([...config.installedEmulators, id]));
+      const nextInstalledIds = Array.from(new Set([...configRef.current.installedEmulators, id]));
       const nextConfig: AppConfig = {
-        ...config,
+        ...configRef.current,
         installedEmulators: nextInstalledIds
       };
 
       await persistConfig(nextConfig);
 
-      const nextEmulators = emulators.map((emu) =>
-        emu.id === id
-          ? {
-              ...emu,
-              status: "installed" as const
-            }
-          : emu
+      setEmulators((previous) =>
+        previous.map((emu) =>
+          emu.id === id
+            ? {
+                ...emu,
+                status: "installed" as const
+              }
+            : emu
+        )
       );
-
-      setEmulators(nextEmulators);
       setSelectedEmulatorId(id);
 
       try {
@@ -347,7 +420,18 @@ export default function App() {
     } catch (reason) {
       setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setInstallingId(null);
+      window.setTimeout(() => {
+        setInstallProgressById((previous) => {
+          if (!(id in previous)) {
+            return previous;
+          }
+
+          const next = { ...previous };
+          delete next[id];
+          installProgressRef.current = next;
+          return next;
+        });
+      }, 500);
     }
   };
 
@@ -371,7 +455,7 @@ export default function App() {
     setRommSession(session);
 
     const nextConfig: AppConfig = {
-      ...config,
+      ...configRef.current,
       romm: {
         baseUrl: session.baseUrl,
         username
@@ -409,8 +493,10 @@ export default function App() {
     const relativeSubdir = resolveGameRomSubdir(game);
 
     try {
-      setDownloadingGameId(downloadId);
-      setDownloadPercent(0);
+      setDownloadProgressById((previous) => ({
+        ...previous,
+        [downloadId]: 0
+      }));
       setLibraryNotice({
         type: "info",
         message: `Downloading "${game.name}" to Roms/${relativeSubdir}...`
@@ -450,8 +536,17 @@ export default function App() {
         message: reason instanceof Error ? reason.message : String(reason)
       });
     } finally {
-      setDownloadingGameId(null);
-      setTimeout(() => setDownloadPercent(0), 500);
+      window.setTimeout(() => {
+        setDownloadProgressById((previous) => {
+          if (!(downloadId in previous)) {
+            return previous;
+          }
+
+          const next = { ...previous };
+          delete next[downloadId];
+          return next;
+        });
+      }, 500);
     }
   };
 
@@ -580,8 +675,7 @@ export default function App() {
           saveSyncStatuses={saveSyncStatuses}
           onDownloadGame={handleDownloadGame}
           onLaunchLocalRom={launchSpecificRom}
-          downloadingGameId={downloadingGameId}
-          downloadPercent={downloadPercent}
+          downloadProgressById={downloadProgressById}
           notice={libraryNotice}
         />
       </main>
@@ -601,7 +695,11 @@ export default function App() {
 
             <div className="picker-list">
               {emulators.map((emu) => {
-                const isInstalling = installingId === emu.id;
+                const installPercent = installProgressById[emu.id];
+                const isInstalling = typeof installPercent === "number";
+                const visibleInstallPercent = isInstalling
+                  ? normalizeDownloadPercent(installPercent)
+                  : 0;
                 const isInstalled = emu.status === "installed";
 
                 return (
@@ -611,14 +709,27 @@ export default function App() {
                       <p>{emu.platformLabel}</p>
                     </div>
                     <button
-                      className="primary-button"
+                      className="primary-button picker-action-button"
                       disabled={isInstalling}
+                      style={
+                        isInstalling
+                          ? {
+                              background: `linear-gradient(
+                                90deg,
+                                #8fb1ff 0%,
+                                #8fb1ff ${visibleInstallPercent}%,
+                                #6d8cff ${visibleInstallPercent}%,
+                                #6d8cff 100%
+                              )`
+                            }
+                          : undefined
+                      }
                       onClick={() =>
                         void (isInstalled ? removeInstalledFlag(emu.id) : installSelectedEmulator(emu.id))
                       }
                     >
                       {isInstalling
-                        ? "Installing..."
+                        ? `Installing... ${Math.round(visibleInstallPercent)}%`
                         : isInstalled
                           ? "Remove"
                           : "Install"}
@@ -646,4 +757,12 @@ function StatusCard({ label, value }: StatusCardProps) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function normalizeDownloadPercent(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(100, Math.max(0, value));
 }

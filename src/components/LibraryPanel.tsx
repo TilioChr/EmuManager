@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getLatestRommSave,
   getRommGames,
+  resolveGameLocalFileName,
   type RommGame,
   type RommSaveEntry,
   type RommSession
@@ -15,8 +16,7 @@ interface LibraryPanelProps {
   saveSyncStatuses: Record<string, SaveSyncStatus>;
   onDownloadGame: (game: RommGame) => Promise<void>;
   onLaunchLocalRom: (romPath: string) => Promise<void>;
-  downloadingGameId?: string | null;
-  downloadPercent?: number;
+  downloadProgressById?: Record<string, number>;
   notice?: {
     type: "success" | "error" | "info";
     message: string;
@@ -41,8 +41,7 @@ export default function LibraryPanel({
   saveSyncStatuses,
   onDownloadGame,
   onLaunchLocalRom,
-  downloadingGameId = null,
-  downloadPercent = 0,
+  downloadProgressById = {},
   notice = null
 }: LibraryPanelProps) {
   const [games, setGames] = useState<RommGame[]>([]);
@@ -59,36 +58,54 @@ export default function LibraryPanel({
     }
   }, [session]);
 
-  const localByFileName = useMemo(() => {
+  const localByRommId = useMemo(() => {
     const map = new Map<string, LocalRomEntry>();
     for (const rom of localRoms) {
-      map.set(normalizeKey(rom.fileName), rom);
+      const rommId = saveSyncStatuses[rom.filePath]?.rommId;
+
+      if (rommId && !map.has(rommId)) {
+        map.set(rommId, rom);
+      }
     }
     return map;
-  }, [localRoms]);
+  }, [localRoms, saveSyncStatuses]);
 
   const mergedItems = useMemo<LibraryItem[]>(() => {
     const remoteItems = games.map((game) => {
-      const fileName = getRemoteFileName(game) || `${game.name}.rom`;
-      const localMatch = localByFileName.get(normalizeKey(fileName));
+      const fileName = resolveGameLocalFileName(game);
+      const platform = getRemotePlatform(game);
+      const rommId = String(game.id);
+      const localMatch = localByRommId.get(rommId);
 
       return {
         id: `remote-${game.id}`,
         title: game.name,
-        platform: game.platform_name ?? game.platform_display_name ?? "Unknown platform",
+        platform,
         fileName,
         downloaded: Boolean(localMatch),
         localPath: localMatch?.filePath,
-        rommId: String(game.id),
+        rommId,
         localSaveStatus: localMatch ? saveSyncStatuses[localMatch.filePath] : undefined,
         remoteGame: game
       };
     });
 
-    const remoteFileNames = new Set(remoteItems.map((item) => normalizeKey(item.fileName)));
+    const matchedLocalPaths = new Set(
+      remoteItems
+        .map((item) => item.localPath)
+        .filter((localPath): localPath is string => typeof localPath === "string")
+    );
+
+    const activeDownloadItems = remoteItems.filter((item) =>
+      item.rommId ? hasDownloadProgress(downloadProgressById, item.rommId) : false
+    );
 
     const localOnlyItems = localRoms
-      .filter((rom) => !remoteFileNames.has(normalizeKey(rom.fileName)))
+      .filter(
+        (rom) =>
+          !matchedLocalPaths.has(rom.filePath) &&
+          !activeDownloadItems.some((item) => isLocalRomForRemoteItem(rom, item))
+      )
       .map((rom) => ({
         id: `local-${rom.filePath}`,
         title: stripExtension(rom.fileName),
@@ -114,7 +131,13 @@ export default function LibraryPanel({
 
       return left.title.localeCompare(right.title, "en", { sensitivity: "base" });
     });
-  }, [games, localByFileName, localRoms, saveSyncStatuses]);
+  }, [
+    downloadProgressById,
+    games,
+    localByRommId,
+    localRoms,
+    saveSyncStatuses
+  ]);
 
   useEffect(() => {
     if (!session) {
@@ -254,7 +277,12 @@ export default function LibraryPanel({
 
       <div className="library-list">
         {filteredItems.map((item) => {
-          const isDownloading = item.remoteGame && downloadingGameId === String(item.remoteGame.id);
+          const downloadId = item.remoteGame ? String(item.remoteGame.id) : null;
+          const downloadPercent = downloadId ? downloadProgressById[downloadId] : undefined;
+          const isDownloading = typeof downloadPercent === "number";
+          const visibleDownloadPercent = isDownloading
+            ? Math.min(100, Math.max(0, downloadPercent))
+            : 0;
 
           return (
             <div key={item.id} className="library-item">
@@ -304,8 +332,8 @@ export default function LibraryPanel({
                             background: `linear-gradient(
                               90deg,
                               #8fb1ff 0%,
-                              #8fb1ff ${downloadPercent}%,
-                              #5f7df0 ${downloadPercent}%,
+                              #8fb1ff ${visibleDownloadPercent}%,
+                              #5f7df0 ${visibleDownloadPercent}%,
                               #5f7df0 100%
                             )`
                           }
@@ -314,7 +342,7 @@ export default function LibraryPanel({
                   >
                     <span className="download-button-label">
                       {isDownloading
-                        ? `Downloading... ${Math.round(downloadPercent)}%`
+                        ? `Downloading... ${Math.round(visibleDownloadPercent)}%`
                         : "Download"}
                     </span>
                   </button>
@@ -334,25 +362,112 @@ export default function LibraryPanel({
   );
 }
 
-function normalizeKey(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeFileNameKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
 }
 
 function stripExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, "");
 }
 
-function getRemoteFileName(game: RommGame): string | null {
+function getRemotePlatform(game: RommGame): string {
+  return game.platform_name ?? game.platform_display_name ?? "Unknown platform";
+}
+
+function isLocalRomForRemoteItem(rom: LocalRomEntry, item: LibraryItem): boolean {
   return (
-    game.file_name ??
-    game.fs_name ??
-    (Array.isArray(game.files)
-      ? (game.files[0]?.file_name as string | undefined) ??
-        (game.files[0]?.fs_name as string | undefined) ??
-        (game.files[0]?.name as string | undefined)
-      : undefined) ??
-    null
+    normalizeFileNameKey(rom.fileName) === normalizeFileNameKey(item.fileName) &&
+    arePlatformsCompatible(item.platform, rom.platformGuess)
   );
+}
+
+function hasDownloadProgress(
+  downloadProgressById: Record<string, number>,
+  downloadId: string
+): boolean {
+  return Object.prototype.hasOwnProperty.call(downloadProgressById, downloadId);
+}
+
+function arePlatformsCompatible(remotePlatform: string, localPlatform: string): boolean {
+  const remoteTokens = platformTokens(remotePlatform);
+  const localTokens = platformTokens(localPlatform);
+
+  if (!remoteTokens.size || !localTokens.size) {
+    return normalizePlatformName(remotePlatform) === normalizePlatformName(localPlatform);
+  }
+
+  for (const token of remoteTokens) {
+    if (localTokens.has(token)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function platformTokens(value: string): Set<string> {
+  const normalized = normalizePlatformName(value);
+  const tokens = new Set<string>();
+
+  if (/\b3ds\b/.test(normalized)) {
+    tokens.add("3ds");
+  }
+  if (/\bnds\b|\bnintendo ds\b|\bds\b/.test(normalized)) {
+    tokens.add("ds");
+  }
+  if (/\bwii\b/.test(normalized)) {
+    tokens.add("wii");
+  }
+  if (/\bgamecube\b|\bgame cube\b|\bgc\b/.test(normalized)) {
+    tokens.add("gamecube");
+  }
+  if (/\bswitch\b|\bnsw\b/.test(normalized)) {
+    tokens.add("switch");
+  }
+  if (/\bps2\b|\bplaystation 2\b/.test(normalized)) {
+    tokens.add("ps2");
+  }
+  if (/\bpsp\b/.test(normalized)) {
+    tokens.add("psp");
+  }
+  if (/\bps1\b|\bpsx\b|\bplaystation 1\b/.test(normalized) || normalized === "playstation") {
+    tokens.add("ps1");
+  }
+  if (/\bgba\b|\bgame boy advance\b/.test(normalized)) {
+    tokens.add("gba");
+  }
+  if (/\bgbc\b|\bgame boy color\b/.test(normalized)) {
+    tokens.add("gbc");
+  }
+  if (
+    /\bgb\b|\bgame boy\b/.test(normalized) &&
+    !/\bgame boy advance\b|\bgame boy color\b/.test(normalized)
+  ) {
+    tokens.add("gb");
+  }
+  if (/\bnes\b/.test(normalized)) {
+    tokens.add("nes");
+  }
+  if (/\bsnes\b|\bsfc\b|\bsuper nintendo\b/.test(normalized)) {
+    tokens.add("snes");
+  }
+  if (/\bn64\b|\bnintendo 64\b/.test(normalized)) {
+    tokens.add("n64");
+  }
+
+  return tokens;
+}
+
+function normalizePlatformName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function formatLocalTimestamp(value: number): string {

@@ -167,12 +167,13 @@ fn check_emulator_installed(root: Option<String>, emulator_id: String) -> Result
 
 #[tauri::command]
 async fn install_emulator_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     emulator_id: String,
 ) -> Result<InstallResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    install_emulator(&paths, &emulator_id).await
+    install_emulator(&app, &paths, &emulator_id).await
 }
 
 #[tauri::command]
