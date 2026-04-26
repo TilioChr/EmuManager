@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import LibraryPanel from "./components/LibraryPanel";
 import RommConnectionCard from "./components/RommConnectionCard";
-import CollapsiblePanel from "./components/CollapsiblePanel";
 import ControllerMappingPanel from "./components/ControllerMappingPanel";
+import NotificationOverlay, {
+  type NotificationEntry,
+  type NotificationKind
+} from "./components/NotificationOverlay";
+import {
+  debugLog,
+  recordDebugLogEntry,
+  type DebugLogEntry
+} from "./lib/debugLog";
 import {
   resolveGameDownloadUrl,
   resolveGameLocalFileName,
@@ -31,6 +40,11 @@ import type {
 } from "./types";
 
 const fallbackPaths = buildPortablePaths(".");
+const DEBUG_WINDOW_LABEL = "debug-logs";
+const LAUNCH_STARTUP_LOCK_MS = 1800;
+const NOTIFICATION_TTL_MS = 5000;
+const NOTIFICATION_EXIT_MS = 220;
+const MAX_NOTIFICATION_HISTORY = 80;
 
 const initialPaths: PortablePaths = {
   ...fallbackPaths,
@@ -70,11 +84,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [generalMessage, setGeneralMessage] = useState<string | null>(null);
   const [libraryNotice, setLibraryNotice] = useState<{
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
+  const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
+  const [notificationHistory, setNotificationHistory] = useState<NotificationEntry[]>([]);
+  const [notificationHistoryOpen, setNotificationHistoryOpen] = useState(false);
+  const notificationIdRef = useRef(0);
+  const notificationTimersRef = useRef<number[]>([]);
 
   const [config, setConfig] = useState<AppConfig>({ installedEmulators: [] });
   const configRef = useRef(config);
@@ -82,8 +100,12 @@ export default function App() {
   const [installProgressById, setInstallProgressById] = useState<Record<string, number>>({});
   const installProgressRef = useRef(installProgressById);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
-  const [configuringId, setConfiguringId] = useState<string | null>(null);
+  const launchingIdRef = useRef<string | null>(launchingId);
+  const [runningRomPaths, setRunningRomPaths] = useState<Record<string, boolean>>({});
+  const runningRomPathsRef = useRef(runningRomPaths);
   const [downloadProgressById, setDownloadProgressById] = useState<Record<string, number>>({});
+  const romProgressLogStepRef = useRef<Record<string, number>>({});
+  const installProgressLogStepRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     configRef.current = config;
@@ -92,6 +114,34 @@ export default function App() {
   useEffect(() => {
     installProgressRef.current = installProgressById;
   }, [installProgressById]);
+
+  useEffect(() => {
+    runningRomPathsRef.current = runningRomPaths;
+  }, [runningRomPaths]);
+
+  useEffect(() => {
+    launchingIdRef.current = launchingId;
+  }, [launchingId]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of notificationTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "F10") {
+        event.preventDefault();
+        void openDebugWindow();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const refreshSaveSyncStatuses = async (root: string, roms: LocalRomEntry[]) => {
     const statuses = await invoke<SaveSyncStatus[]>("get_save_sync_statuses_command", {
@@ -144,13 +194,16 @@ export default function App() {
   useEffect(() => {
     const bootstrap = async () => {
       try {
+        void debugLog("info", "app", "Application bootstrap started");
         const portablePaths = await invoke<PortablePaths>("init_portable_layout");
         setPaths(portablePaths);
+        void debugLog("debug", "paths", "Portable layout initialized", portablePaths);
 
         const savedConfig = await invoke<AppConfig>("load_app_config", {
           root: portablePaths.root
         });
         setConfig(savedConfig);
+        configRef.current = savedConfig;
 
         await refreshLocalRoms(portablePaths.root);
         await refreshLocalSaves(portablePaths.root);
@@ -208,8 +261,14 @@ export default function App() {
 
         const firstInstalled = nextEmulators.find((entry) => entry.status === "installed");
         setSelectedEmulatorId(firstInstalled?.id ?? null);
+        void debugLog("success", "app", "Application bootstrap completed", {
+          installedEmulators: mergedInstalledIds,
+          selectedEmulatorId: firstInstalled?.id ?? null
+        });
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : String(reason));
+        const message = reason instanceof Error ? reason.message : String(reason);
+        setError(message);
+        void debugLog("error", "app", "Application bootstrap failed", message);
       } finally {
         setLoading(false);
       }
@@ -223,14 +282,28 @@ export default function App() {
     let unlistenRomComplete: UnlistenFn | null = null;
     let unlistenInstallProgress: UnlistenFn | null = null;
     let unlistenInstallComplete: UnlistenFn | null = null;
+    let unlistenDebugEntry: UnlistenFn | null = null;
 
     const setupListeners = async () => {
       unlistenRomProgress = await listen<DownloadProgressPayload>("rom-download-progress", (event) => {
         const payload = event.payload;
+        const percent = normalizeDownloadPercent(payload.percent);
         setDownloadProgressById((previous) => ({
           ...previous,
-          [payload.downloadId]: normalizeDownloadPercent(payload.percent)
+          [payload.downloadId]: percent
         }));
+        logProgressMilestone(
+          romProgressLogStepRef,
+          payload.downloadId,
+          percent,
+          "rom-download",
+          `Downloading ROM "${payload.fileName}"`,
+          {
+            downloadId: payload.downloadId,
+            downloadedBytes: payload.downloadedBytes,
+            totalBytes: payload.totalBytes
+          }
+        );
       });
 
       unlistenRomComplete = await listen<DownloadProgressPayload>("rom-download-complete", (event) => {
@@ -239,20 +312,38 @@ export default function App() {
           ...previous,
           [payload.downloadId]: 100
         }));
+        void debugLog("success", "rom-download", `ROM download complete: ${payload.fileName}`, {
+          downloadId: payload.downloadId,
+          downloadedBytes: payload.downloadedBytes,
+          totalBytes: payload.totalBytes
+        });
       });
 
       unlistenInstallProgress = await listen<EmulatorInstallProgressPayload>(
         "emulator-install-progress",
         (event) => {
           const payload = event.payload;
+          const percent = normalizeDownloadPercent(payload.percent);
           setInstallProgressById((previous) => {
             const next = {
               ...previous,
-              [payload.emulatorId]: normalizeDownloadPercent(payload.percent)
+              [payload.emulatorId]: percent
             };
             installProgressRef.current = next;
             return next;
           });
+          logProgressMilestone(
+            installProgressLogStepRef,
+            payload.emulatorId,
+            percent,
+            "emulator-install",
+            `Downloading emulator archive "${payload.fileName}"`,
+            {
+              emulatorId: payload.emulatorId,
+              downloadedBytes: payload.downloadedBytes,
+              totalBytes: payload.totalBytes
+            }
+          );
         }
       );
 
@@ -268,8 +359,20 @@ export default function App() {
             installProgressRef.current = next;
             return next;
           });
+          void debugLog("success", "emulator-install", `Emulator archive downloaded: ${payload.emulatorId}`, {
+            emulatorId: payload.emulatorId,
+            fileName: payload.fileName,
+            downloadedBytes: payload.downloadedBytes,
+            totalBytes: payload.totalBytes
+          });
         }
       );
+
+      unlistenDebugEntry = await listen<DebugLogEntry>("debug-log-entry", (event) => {
+        if (event.payload.source === "backend") {
+          recordDebugLogEntry(event.payload);
+        }
+      });
     };
 
     void setupListeners();
@@ -286,6 +389,9 @@ export default function App() {
       }
       if (unlistenInstallComplete) {
         unlistenInstallComplete();
+      }
+      if (unlistenDebugEntry) {
+        unlistenDebugEntry();
       }
     };
   }, []);
@@ -320,7 +426,43 @@ export default function App() {
     return result;
   };
 
+  const dismissNotification = (id: number) => {
+    setNotifications((previous) =>
+      previous.map((entry) => (entry.id === id ? { ...entry, exiting: true } : entry))
+    );
+
+    const removeTimerId = window.setTimeout(() => {
+      setNotifications((previous) => previous.filter((entry) => entry.id !== id));
+    }, NOTIFICATION_EXIT_MS);
+
+    notificationTimersRef.current.push(removeTimerId);
+  };
+
+  const notify = (kind: NotificationKind, message: string) => {
+    const entry: NotificationEntry = {
+      id: notificationIdRef.current + 1,
+      kind,
+      message,
+      createdAt: Date.now()
+    };
+
+    notificationIdRef.current = entry.id;
+    setNotifications((previous) => [...previous.filter((item) => !item.exiting), entry].slice(-5));
+    setNotificationHistory((previous) => [entry, ...previous].slice(0, MAX_NOTIFICATION_HISTORY));
+
+    const dismissTimerId = window.setTimeout(() => {
+      dismissNotification(entry.id);
+    }, NOTIFICATION_TTL_MS - NOTIFICATION_EXIT_MS);
+
+    notificationTimersRef.current.push(dismissTimerId);
+  };
+
+  const clearNotificationHistory = () => {
+    setNotificationHistory([]);
+  };
+
   const removeInstalledFlag = async (id: string) => {
+    void debugLog("info", "emulator", `Removing installed flag for ${id}`);
     const nextInstalledIds = configRef.current.installedEmulators.filter((entry) => entry !== id);
     const nextConfig: AppConfig = {
       ...configRef.current,
@@ -345,23 +487,50 @@ export default function App() {
       setSelectedEmulatorId(replacement?.id ?? null);
     }
 
-    setGeneralMessage(`Removed ${id} from the installed list. Existing files were not deleted.`);
+    notify("info", `Removed ${id} from the installed list. Existing files were not deleted.`);
+    void debugLog("success", "emulator", `Removed installed flag for ${id}`, {
+      remainingInstalledEmulators: nextInstalledIds
+    });
   };
 
-  const configureSelectedEmulator = async (id: string) => {
-    try {
-      setConfiguringId(id);
-      const result = await invoke<ConfigureResult>("configure_emulator_command", {
-        root: paths.root,
-        emulatorId: id
-      });
-      setGeneralMessage(`Configuration reapplied: ${result.userDirectory}`);
-      await refreshInstalledVersions(paths.root);
-    } catch (reason) {
-      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setConfiguringId(null);
+  const clearLaunchingEmulator = (id: string, delayMs = 0) => {
+    const clear = () => {
+      if (launchingIdRef.current !== id) {
+        return;
+      }
+
+      launchingIdRef.current = null;
+      setLaunchingId((current) => (current === id ? null : current));
+    };
+
+    if (delayMs > 0) {
+      window.setTimeout(clear, delayMs);
+      return;
     }
+
+    clear();
+  };
+
+  const clearRunningRomPath = (romPath: string, delayMs = 0) => {
+    const clear = () => {
+      setRunningRomPaths((previous) => {
+        if (!previous[romPath]) {
+          return previous;
+        }
+
+        const next = { ...previous };
+        delete next[romPath];
+        runningRomPathsRef.current = next;
+        return next;
+      });
+    };
+
+    if (delayMs > 0) {
+      window.setTimeout(clear, delayMs);
+      return;
+    }
+
+    clear();
   };
 
   const installSelectedEmulator = async (id: string) => {
@@ -376,7 +545,10 @@ export default function App() {
       };
       installProgressRef.current = initialProgress;
       setInstallProgressById(initialProgress);
-      setGeneralMessage(`Downloading and installing ${id}...`);
+      notify("info", `Downloading and installing ${id}...`);
+      void debugLog("info", "emulator-install", `Installing emulator ${id}`, {
+        root: paths.root
+      });
 
       const result = await invoke<InstallResult>("install_emulator_command", {
         root: paths.root,
@@ -409,16 +581,24 @@ export default function App() {
           emulatorId: id
         });
 
-        setGeneralMessage(
+        notify(
+          "success",
           `${id} installed in ${result.installPath} and configured in ${configResult.userDirectory}`
         );
+        void debugLog("success", "emulator-install", `Installed and configured ${id}`, {
+          install: result,
+          configuration: configResult
+        });
       } catch {
-        setGeneralMessage(`${id} installed in ${result.installPath}`);
+        notify("warning", `${id} installed in ${result.installPath}, but configuration failed.`);
+        void debugLog("warning", "emulator-install", `Installed ${id}, configuration step failed`, result);
       }
 
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "emulator-install", `Installation failed for ${id}`, message);
     } finally {
       window.setTimeout(() => {
         setInstallProgressById((previous) => {
@@ -429,6 +609,7 @@ export default function App() {
           const next = { ...previous };
           delete next[id];
           installProgressRef.current = next;
+          delete installProgressLogStepRef.current[id];
           return next;
         });
       }, 500);
@@ -436,23 +617,39 @@ export default function App() {
   };
 
   const launchSelectedEmulator = async (id: string) => {
+    if (launchingIdRef.current === id) {
+      return;
+    }
+
+    let launched = false;
+
     try {
+      launchingIdRef.current = id;
       setLaunchingId(id);
+      void debugLog("info", "emulator-launch", `Launching emulator ${id}`);
       const result = await invoke<LaunchResult>("launch_emulator_command", {
         root: paths.root,
         emulatorId: id
       });
-      setGeneralMessage(`Emulator launched from ${result.executablePath}`);
+      notify("success", `Emulator launched from ${result.executablePath}`);
+      void debugLog("success", "emulator-launch", `Emulator launched: ${id}`, result);
+      launched = true;
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "emulator-launch", `Emulator launch failed: ${id}`, message);
     } finally {
-      setLaunchingId(null);
+      clearLaunchingEmulator(id, launched ? LAUNCH_STARTUP_LOCK_MS : 0);
     }
   };
 
   const handleRommConnected = async (session: RommSession, username: string) => {
     setRommSession(session);
+    void debugLog("success", "romm", `Connected to RomM as ${username}`, {
+      baseUrl: session.baseUrl,
+      username
+    });
 
     const nextConfig: AppConfig = {
       ...configRef.current,
@@ -467,6 +664,7 @@ export default function App() {
       type: "success",
       message: `Connected to RomM as ${username}.`
     });
+    notify("success", `Connected to RomM as ${username}.`);
   };
 
   const handleDownloadGame = async (game: RommGame) => {
@@ -475,6 +673,7 @@ export default function App() {
         type: "error",
         message: "RomM connection required."
       });
+      notify("error", "RomM connection required.");
       return;
     }
 
@@ -485,6 +684,7 @@ export default function App() {
         type: "error",
         message: `Unable to resolve the download URL for "${game.name}".`
       });
+      notify("error", `Unable to resolve the download URL for "${game.name}".`);
       return;
     }
 
@@ -500,6 +700,14 @@ export default function App() {
       setLibraryNotice({
         type: "info",
         message: `Downloading "${game.name}" to Roms/${relativeSubdir}...`
+      });
+      notify("info", `Downloading "${game.name}" to Roms/${relativeSubdir}...`);
+      void debugLog("info", "rom-download", `Starting ROM download: ${game.name}`, {
+        downloadId,
+        targetFileName,
+        relativeSubdir,
+        platform: game.platform_name ?? game.platform_display_name ?? null,
+        expectedTotalBytes: game.fs_size_bytes ?? null
       });
 
       const result = await invoke<DownloadResult>("download_rom_command", {
@@ -530,10 +738,21 @@ export default function App() {
         type: "success",
         message: `ROM downloaded to ${result.filePath}`
       });
+      notify("success", `ROM downloaded to ${result.filePath}`);
+      void debugLog("success", "rom-download", `ROM registered locally: ${game.name}`, {
+        downloadId,
+        result
+      });
     } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
       setLibraryNotice({
         type: "error",
-        message: reason instanceof Error ? reason.message : String(reason)
+        message
+      });
+      notify("error", message);
+      void debugLog("error", "rom-download", `ROM download failed: ${game.name}`, {
+        downloadId,
+        message
       });
     } finally {
       window.setTimeout(() => {
@@ -544,6 +763,7 @@ export default function App() {
 
           const next = { ...previous };
           delete next[downloadId];
+          delete romProgressLogStepRef.current[downloadId];
           return next;
         });
       }, 500);
@@ -551,7 +771,24 @@ export default function App() {
   };
 
   const launchSpecificRom = async (romPath: string) => {
+    if (runningRomPathsRef.current[romPath]) {
+      void debugLog("debug", "game-launch", "Ignored duplicate ROM launch while already running", {
+        romPath
+      });
+      return;
+    }
+
+    const nextRunning = {
+      ...runningRomPathsRef.current,
+      [romPath]: true
+    };
+    runningRomPathsRef.current = nextRunning;
+    setRunningRomPaths(nextRunning);
+
+    let launched = false;
+
     try {
+      void debugLog("info", "game-launch", "Launching ROM", { romPath });
       const result = await invoke<GameLaunchResult>("launch_game_auto_command", {
         root: paths.root,
         romPath,
@@ -562,12 +799,21 @@ export default function App() {
             } satisfies RommLaunchSession)
           : null
       });
-      setGeneralMessage(`Session ${result.emulatorId} terminée et synchronisée pour ${result.romPath}`);
+      notify("success", `Session ${result.emulatorId} terminée et synchronisée pour ${result.romPath}`);
+      void debugLog("success", "game-launch", `ROM session completed with ${result.emulatorId}`, result);
+      launched = true;
       await refreshLocalRoms(paths.root);
       await refreshLocalSaves(paths.root);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
-      setGeneralMessage(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "game-launch", "ROM launch failed", {
+        romPath,
+        message
+      });
+    } finally {
+      clearRunningRomPath(romPath, launched ? LAUNCH_STARTUP_LOCK_MS : 0);
     }
   };
 
@@ -609,16 +855,42 @@ export default function App() {
         <nav className="emulator-list">
           {emulators
             .filter((emu) => emu.status === "installed")
-            .map((emu) => (
-              <button
-                key={emu.id}
-                className={`emulator-item ${selectedEmulatorId === emu.id ? "emulator-item-active" : ""}`}
-                onClick={() => setSelectedEmulatorId(emu.id)}
-              >
-                <span>{emu.name}</span>
-                <small>{emu.platformLabel}</small>
-              </button>
-            ))}
+            .map((emu) => {
+              const isSelected = selectedEmulatorId === emu.id;
+              const isLaunching = launchingId === emu.id;
+              const version = emu.version ?? emu.catalogVersion ?? "Unknown";
+
+              return (
+                <div
+                  key={emu.id}
+                  className={`emulator-menu-item ${isSelected ? "emulator-menu-item-active" : ""}`}
+                >
+                  <button
+                    className="emulator-select-button"
+                    type="button"
+                    onClick={() => setSelectedEmulatorId(emu.id)}
+                  >
+                    <span className="emulator-menu-name">{emu.name}</span>
+                    <span className="emulator-menu-platform">{emu.platformLabel}</span>
+                    <span className="emulator-menu-version">Version {version}</span>
+                  </button>
+                  <button
+                    className="emulator-menu-launch-button"
+                    type="button"
+                    disabled={isLaunching}
+                    title={`Launch ${emu.name}`}
+                    aria-label={`Launch ${emu.name}`}
+                    onClick={() => void launchSelectedEmulator(emu.id)}
+                  >
+                    {isLaunching ? (
+                      <span className="button-spinner" aria-hidden="true" />
+                    ) : (
+                      <span className="play-icon" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
 
           {installedCount === 0 ? (
             <div className="empty-state">
@@ -629,34 +901,6 @@ export default function App() {
       </aside>
 
       <main className="content">
-        <CollapsiblePanel eyebrow="Selected Emulator" title={selectedEmulator?.name}>
-          {selectedEmulator ? (
-            <div className="selected-emulator-grid">
-              <StatusCard label="Platform" value={selectedEmulator.platformLabel} />
-              <StatusCard
-                label="Version"
-                value={selectedEmulator.version ?? selectedEmulator.catalogVersion ?? "Unknown"}
-              />
-            </div>
-          ) : null}
-
-          <div className="selected-actions">
-            <button
-              className="primary-button"
-              disabled={!selectedEmulator || launchingId === selectedEmulator.id}
-              onClick={() => selectedEmulator && void launchSelectedEmulator(selectedEmulator.id)}
-            >
-              {selectedEmulator && launchingId === selectedEmulator.id
-                ? "Launching..."
-                : "Open emulator"}
-            </button>
-          </div>
-
-          {generalMessage ? (
-            <div className="inline-notice inline-notice-info top-gap">{generalMessage}</div>
-          ) : null}
-        </CollapsiblePanel>
-
         <RommConnectionCard
           defaultBaseUrl={config.romm?.baseUrl}
           defaultUsername={config.romm?.username}
@@ -676,6 +920,7 @@ export default function App() {
           onDownloadGame={handleDownloadGame}
           onLaunchLocalRom={launchSpecificRom}
           downloadProgressById={downloadProgressById}
+          runningRomPaths={runningRomPaths}
           notice={libraryNotice}
         />
       </main>
@@ -741,20 +986,15 @@ export default function App() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
 
-interface StatusCardProps {
-  label: string;
-  value: string;
-}
-
-function StatusCard({ label, value }: StatusCardProps) {
-  return (
-    <div className="path-card">
-      <small>{label}</small>
-      <strong>{value}</strong>
+      <NotificationOverlay
+        notifications={notifications}
+        history={notificationHistory}
+        historyOpen={notificationHistoryOpen}
+        onToggleHistory={() => setNotificationHistoryOpen((open) => !open)}
+        onDismiss={dismissNotification}
+        onClearHistory={clearNotificationHistory}
+      />
     </div>
   );
 }
@@ -765,4 +1005,59 @@ function normalizeDownloadPercent(value: number | undefined): number {
   }
 
   return Math.min(100, Math.max(0, value));
+}
+
+async function openDebugWindow(): Promise<void> {
+  try {
+    const existing = await WebviewWindow.getByLabel(DEBUG_WINDOW_LABEL);
+    if (existing) {
+      await existing.unminimize();
+      await existing.show();
+      await existing.setFocus();
+      void debugLog("debug", "debug", "Focused existing debug log window");
+      return;
+    }
+
+    const debugWindow = new WebviewWindow(DEBUG_WINDOW_LABEL, {
+      url: "/#/debug",
+      title: "EmuManager Debug Logs",
+      width: 1080,
+      height: 720,
+      minWidth: 760,
+      minHeight: 440,
+      resizable: true,
+      focus: true
+    });
+
+    debugWindow.once("tauri://created", () => {
+      void debugLog("info", "debug", "Debug log window opened");
+    });
+    debugWindow.once("tauri://error", (event) => {
+      void debugLog("error", "debug", "Failed to open debug log window", event.payload);
+    });
+  } catch (reason) {
+    void debugLog("error", "debug", "Failed to toggle debug log window", reason);
+  }
+}
+
+function logProgressMilestone(
+  ref: { current: Record<string, number> },
+  id: string,
+  percent: number,
+  scope: string,
+  label: string,
+  details: Record<string, unknown>
+) {
+  const step = percent >= 100 ? 100 : Math.floor(percent / 10) * 10;
+  const previous = ref.current[id] ?? -1;
+
+  if (step <= previous || step === 0) {
+    return;
+  }
+
+  ref.current[id] = step;
+  void debugLog("debug", scope, `${label}: ${step}%`, {
+    ...details,
+    percent: step
+  });
 }

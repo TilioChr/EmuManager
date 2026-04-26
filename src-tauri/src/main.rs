@@ -4,6 +4,7 @@ mod azahar_controller_writer;
 mod config_store;
 mod controller_profile_writer;
 mod controller_profiles;
+mod debug_log;
 mod dolphin_controller_writer;
 mod eden_controller_writer;
 mod emulator_configurator;
@@ -22,6 +23,7 @@ mod romm_sync;
 use config_store::{load_config, save_config, AppConfig};
 use controller_profile_writer::{apply_controller_profile, ControllerWriteResult};
 use controller_profiles::{load_controller_profiles, save_controller_profiles, ControllerProfile};
+use debug_log::emit_debug_log;
 use emulator_configurator::ConfigureResult;
 use emulator_installer::{
     get_installed_emulator_version, install_emulator, is_emulator_installed, InstallResult,
@@ -171,29 +173,104 @@ async fn install_emulator_command(
     root: Option<String>,
     emulator_id: String,
 ) -> Result<InstallResult, String> {
+    emit_debug_log(
+        &app,
+        "info",
+        "emulator-install",
+        &format!("Backend install command started for {}", emulator_id),
+        None,
+    );
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    install_emulator(&app, &paths, &emulator_id).await
+    let result = install_emulator(&app, &paths, &emulator_id).await;
+    match &result {
+        Ok(install) => emit_debug_log(
+            &app,
+            "success",
+            "emulator-install",
+            &format!("Backend install command completed for {}", emulator_id),
+            Some(format!(
+                "install_path={}\nexecutable_path={}\narchive_path={}",
+                install.install_path, install.executable_path, install.archive_path
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            &app,
+            "error",
+            "emulator-install",
+            &format!("Backend install command failed for {}", emulator_id),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 fn configure_emulator_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     emulator_id: String,
 ) -> Result<ConfigureResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    emulator_configurator::configure_emulator(&paths, &emulator_id)
+    let result = emulator_configurator::configure_emulator(&paths, &emulator_id);
+    match &result {
+        Ok(configure) => emit_debug_log(
+            &app,
+            "success",
+            "emulator-config",
+            &format!("Backend configuration completed for {}", emulator_id),
+            Some(format!(
+                "user_directory={}\nconfig_directory={}",
+                configure.user_directory, configure.config_directory
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            &app,
+            "error",
+            "emulator-config",
+            &format!("Backend configuration failed for {}", emulator_id),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
-fn launch_emulator_command(
+async fn launch_emulator_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     emulator_id: String,
 ) -> Result<LaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    launch_emulator(&paths, &emulator_id)
+    let emulator_id_for_launch = emulator_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        launch_emulator(&paths, &emulator_id_for_launch)
+    })
+    .await
+    .map_err(|error| format!("Lancement de l'emulateur interrompu: {}", error))?;
+
+    match &result {
+        Ok(launch) => emit_debug_log(
+            &app,
+            "success",
+            "emulator-launch",
+            &format!("Backend launched emulator {}", emulator_id),
+            Some(format!(
+                "executable_path={}\nworking_directory={}",
+                launch.executable_path, launch.working_directory
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            &app,
+            "error",
+            "emulator-launch",
+            &format!("Backend emulator launch failed for {}", emulator_id),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -202,9 +279,39 @@ async fn download_rom_command(
     root: Option<String>,
     request: DownloadRomRequest,
 ) -> Result<DownloadResult, String> {
+    emit_debug_log(
+        &app,
+        "info",
+        "rom-download",
+        &format!("Backend ROM download started for {}", request.file_name),
+        Some(format!(
+            "download_id={}\nrelative_subdir={:?}\nexpected_total_bytes={:?}",
+            request.download_id, request.relative_subdir, request.expected_total_bytes
+        )),
+    );
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    download_rom_to_library(&app, &paths, &request).await
+    let result = download_rom_to_library(&app, &paths, &request).await;
+    match &result {
+        Ok(download) => emit_debug_log(
+            &app,
+            "success",
+            "rom-download",
+            &format!("Backend ROM download completed for {}", request.file_name),
+            Some(format!(
+                "file_path={}\nbytes_written={}",
+                download.file_path, download.bytes_written
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            &app,
+            "error",
+            "rom-download",
+            &format!("Backend ROM download failed for {}", request.file_name),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -237,7 +344,8 @@ fn get_save_sync_statuses_command(
 }
 
 #[tauri::command]
-fn launch_game_command(
+async fn launch_game_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     emulator_id: String,
     rom_path: String,
@@ -245,18 +353,72 @@ fn launch_game_command(
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    launch_game(&paths, &emulator_id, &rom_path, romm_session.as_ref())
+    let emulator_id_for_launch = emulator_id.clone();
+    let rom_path_for_launch = rom_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        launch_game(
+            &paths,
+            &emulator_id_for_launch,
+            &rom_path_for_launch,
+            romm_session.as_ref(),
+        )
+    })
+    .await
+    .map_err(|error| format!("Lancement du jeu interrompu: {}", error))?;
+
+    log_game_launch_result(&app, &result, &emulator_id, &rom_path);
+    result
 }
 
 #[tauri::command]
-fn launch_game_auto_command(
+async fn launch_game_auto_command(
+    app: tauri::AppHandle,
     root: Option<String>,
     rom_path: String,
     romm_session: Option<RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    launch_game_auto_with_session(&paths, &rom_path, romm_session.as_ref())
+    let rom_path_for_launch = rom_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        launch_game_auto_with_session(&paths, &rom_path_for_launch, romm_session.as_ref())
+    })
+    .await
+    .map_err(|error| format!("Lancement du jeu interrompu: {}", error))?;
+
+    let emulator_id = result
+        .as_ref()
+        .map(|launch| launch.emulator_id.as_str())
+        .unwrap_or("auto");
+    log_game_launch_result(&app, &result, emulator_id, &rom_path);
+    result
+}
+
+fn log_game_launch_result(
+    app: &tauri::AppHandle,
+    result: &Result<GameLaunchResult, String>,
+    emulator_id: &str,
+    rom_path: &str,
+) {
+    match result {
+        Ok(launch) => emit_debug_log(
+            app,
+            "success",
+            "game-launch",
+            &format!("Backend launched ROM with {}", launch.emulator_id),
+            Some(format!(
+                "rom_path={}\nexecutable_path={}",
+                launch.rom_path, launch.executable_path
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            app,
+            "error",
+            "game-launch",
+            &format!("Backend ROM launch failed with {}", emulator_id),
+            Some(format!("rom_path={}\nerror={}", rom_path, error)),
+        ),
+    }
 }
 
 fn main() {

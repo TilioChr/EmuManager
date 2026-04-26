@@ -1,4 +1,5 @@
 use crate::emulator_registry::{built_in_emulators, EmulatorDefinition};
+use crate::debug_log::emit_debug_log;
 use crate::portable_paths::PortablePaths;
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -99,12 +100,32 @@ pub async fn install_emulator(
     fs::create_dir_all(&install_dir)
         .map_err(|error| format!("Impossible de recréer le dossier d'installation: {}", error))?;
 
+    emit_debug_log(
+        app,
+        "info",
+        "emulator-install",
+        &format!("Extracting {} archive", definition.name),
+        Some(format!(
+            "archive_path={}\ninstall_dir={}",
+            archive_path.to_string_lossy(),
+            install_dir.to_string_lossy()
+        )),
+    );
+
     match archive_format.to_ascii_lowercase().as_str() {
         "zip" => extract_zip(&archive_path, &install_dir)?,
         "7z" => sevenz_rust::decompress_file(&archive_path, &install_dir)
             .map_err(|error| format!("Extraction impossible: {}", error))?,
         other => return Err(format!("Format d'archive non supporté: {}", other)),
     }
+
+    emit_debug_log(
+        app,
+        "success",
+        "emulator-install",
+        &format!("Extracted {} archive", definition.name),
+        Some(format!("install_dir={}", install_dir.to_string_lossy())),
+    );
 
     let executable =
         resolve_executable_in_install_dir(&install_dir, &definition).ok_or_else(|| {

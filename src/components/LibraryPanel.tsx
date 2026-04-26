@@ -7,6 +7,7 @@ import {
   type RommSaveEntry,
   type RommSession
 } from "../lib/romm";
+import { debugLog } from "../lib/debugLog";
 import type { LocalRomEntry, SaveSyncStatus } from "../types";
 import CollapsiblePanel from "./CollapsiblePanel";
 
@@ -17,6 +18,7 @@ interface LibraryPanelProps {
   onDownloadGame: (game: RommGame) => Promise<void>;
   onLaunchLocalRom: (romPath: string) => Promise<void>;
   downloadProgressById?: Record<string, number>;
+  runningRomPaths?: Record<string, boolean>;
   notice?: {
     type: "success" | "error" | "info";
     message: string;
@@ -42,6 +44,7 @@ export default function LibraryPanel({
   onDownloadGame,
   onLaunchLocalRom,
   downloadProgressById = {},
+  runningRomPaths = {},
   notice = null
 }: LibraryPanelProps) {
   const [games, setGames] = useState<RommGame[]>([]);
@@ -210,16 +213,25 @@ export default function LibraryPanel({
   const loadGames = async () => {
     if (!session) {
       setError("Offline mode: only already downloaded ROMs are available.");
+      void debugLog("warning", "library", "RomM library load skipped in offline mode");
       return;
     }
 
     try {
       setLoading(true);
       setError(null);
+      void debugLog("info", "library", "Loading RomM library", {
+        baseUrl: session.baseUrl
+      });
       const roms = await getRommGames(session);
       setGames(roms);
+      void debugLog("success", "library", "RomM library loaded", {
+        count: roms.length
+      });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to load RomM library.");
+      const message = reason instanceof Error ? reason.message : "Failed to load RomM library.";
+      setError(message);
+      void debugLog("error", "library", "Failed to load RomM library", message);
     } finally {
       setLoading(false);
     }
@@ -283,6 +295,7 @@ export default function LibraryPanel({
           const visibleDownloadPercent = isDownloading
             ? Math.min(100, Math.max(0, downloadPercent))
             : 0;
+          const isRunning = item.localPath ? Boolean(runningRomPaths[item.localPath]) : false;
 
           return (
             <div key={item.id} className="library-item">
@@ -314,10 +327,21 @@ export default function LibraryPanel({
               <div className="library-actions">
                 {item.downloaded && item.localPath ? (
                   <button
-                    className="primary-button compact-button"
+                    className="primary-button compact-button launch-action-button"
+                    disabled={isRunning}
+                    aria-busy={isRunning}
                     onClick={() => void onLaunchLocalRom(item.localPath!)}
                   >
-                    Launch
+                    <span className="button-content">
+                      {isRunning ? (
+                        <>
+                          <span className="button-spinner" aria-hidden="true" />
+                          Running...
+                        </>
+                      ) : (
+                        "Launch"
+                      )}
+                    </span>
                   </button>
                 ) : null}
 

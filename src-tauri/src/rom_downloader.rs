@@ -1,4 +1,5 @@
 use crate::portable_paths::PortablePaths;
+use crate::debug_log::emit_debug_log;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,17 @@ pub async fn download_rom_to_library(
     let safe_file_name = sanitize_file_name(&request.file_name);
     let destination = target_dir.join(&safe_file_name);
     let partial_destination = target_dir.join(format!("{}.part", safe_file_name));
+    emit_debug_log(
+        app,
+        "debug",
+        "rom-download",
+        &format!("Prepared ROM destination for {}", safe_file_name),
+        Some(format!(
+            "destination={}\npartial_destination={}",
+            destination.to_string_lossy(),
+            partial_destination.to_string_lossy()
+        )),
+    );
 
     if partial_destination.exists() {
         tokio::fs::remove_file(&partial_destination)
@@ -89,6 +101,13 @@ pub async fn download_rom_to_library(
     tokio::fs::rename(&partial_destination, &destination)
         .await
         .map_err(|error| format!("Finalisation du téléchargement impossible: {}", error))?;
+    emit_debug_log(
+        app,
+        "debug",
+        "rom-download",
+        &format!("Finalized ROM file {}", safe_file_name),
+        Some(format!("destination={}", destination.to_string_lossy())),
+    );
 
     Ok(DownloadResult {
         file_path: destination.to_string_lossy().to_string(),

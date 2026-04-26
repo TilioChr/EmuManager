@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { createRommSession, type RommSession } from "../lib/romm";
+import { debugLog } from "../lib/debugLog";
 import CollapsiblePanel from "./CollapsiblePanel";
 
 interface RommConnectionCardProps {
@@ -27,6 +28,10 @@ export default function RommConnectionCard({
     setSuccess(null);
 
     try {
+      void debugLog("info", "romm", "RomM connection attempt", {
+        baseUrl,
+        username
+      });
       const session = await createRommSession({
         baseUrl,
         username,
@@ -37,7 +42,13 @@ export default function RommConnectionCard({
       setPassword("");
       setSuccess("Connexion RomM réussie.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Connexion RomM impossible.");
+      const message = reason instanceof Error ? reason.message : "Connexion RomM impossible.";
+      setError(message);
+      void debugLog("error", "romm", "RomM connection failed", {
+        baseUrl,
+        username,
+        message
+      });
     } finally {
       setLoading(false);
     }
