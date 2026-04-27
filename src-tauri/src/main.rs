@@ -12,6 +12,7 @@ mod emulator_installer;
 mod emulator_registry;
 mod game_launcher;
 mod local_library;
+mod manual_import;
 mod melonds_controller_writer;
 mod pcsx2_controller_writer;
 mod platform_router;
@@ -26,11 +27,19 @@ use controller_profiles::{load_controller_profiles, save_controller_profiles, Co
 use debug_log::emit_debug_log;
 use emulator_configurator::ConfigureResult;
 use emulator_installer::{
-    get_installed_emulator_version, install_emulator, is_emulator_installed, InstallResult,
+    get_installed_emulator_version, install_emulator, is_emulator_installed, uninstall_emulator,
+    InstallResult, UninstallResult,
 };
 use emulator_registry::{built_in_emulators, EmulatorDefinition};
 use game_launcher::{launch_game, launch_game_auto_with_session, GameLaunchResult};
-use local_library::{list_local_roms, list_local_saves, LocalRomEntry, LocalSaveEntry};
+use local_library::{
+    delete_local_rom, list_local_roms, list_local_saves, DeleteLocalRomResult, LocalRomEntry,
+    LocalSaveEntry,
+};
+use manual_import::{
+    import_local_rom, manual_import_platforms, ManualImportPlatform, ManualImportRequest,
+    ManualImportResult,
+};
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult, DownloadRomRequest};
@@ -161,6 +170,31 @@ fn list_local_saves_command(root: Option<String>) -> Result<Vec<LocalSaveEntry>,
 }
 
 #[tauri::command]
+fn delete_local_rom_command(
+    root: Option<String>,
+    rom_path: String,
+) -> Result<DeleteLocalRomResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    delete_local_rom(&paths, &rom_path)
+}
+
+#[tauri::command]
+fn get_manual_import_platforms_command() -> Vec<ManualImportPlatform> {
+    manual_import_platforms()
+}
+
+#[tauri::command]
+fn import_local_rom_command(
+    root: Option<String>,
+    request: ManualImportRequest,
+) -> Result<ManualImportResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    import_local_rom(&paths, &request)
+}
+
+#[tauri::command]
 fn check_emulator_installed(root: Option<String>, emulator_id: String) -> Result<bool, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
@@ -202,6 +236,39 @@ async fn install_emulator_command(
             Some(error.clone()),
         ),
     }
+    result
+}
+
+#[tauri::command]
+fn uninstall_emulator_command(
+    app: tauri::AppHandle,
+    root: Option<String>,
+    emulator_id: String,
+) -> Result<UninstallResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    let result = uninstall_emulator(&paths, &emulator_id);
+
+    match &result {
+        Ok(uninstall) => emit_debug_log(
+            &app,
+            "success",
+            "emulator-uninstall",
+            &format!("Backend uninstalled emulator {}", emulator_id),
+            Some(format!(
+                "install_path={}\nremoved={}",
+                uninstall.install_path, uninstall.removed
+            )),
+        ),
+        Err(error) => emit_debug_log(
+            &app,
+            "error",
+            "emulator-uninstall",
+            &format!("Backend uninstall failed for {}", emulator_id),
+            Some(error.clone()),
+        ),
+    }
+
     result
 }
 
@@ -433,13 +500,17 @@ fn main() {
             save_controller_profile_command,
             list_local_roms_command,
             list_local_saves_command,
+            delete_local_rom_command,
             check_emulator_installed,
             install_emulator_command,
+            uninstall_emulator_command,
             configure_emulator_command,
             launch_emulator_command,
             download_rom_command,
             register_romm_rom_command,
             get_save_sync_statuses_command,
+            get_manual_import_platforms_command,
+            import_local_rom_command,
             launch_game_command,
             launch_game_auto_command
         ])

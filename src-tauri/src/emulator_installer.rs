@@ -23,6 +23,14 @@ pub struct InstallResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UninstallResult {
+    pub emulator_id: String,
+    pub install_path: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmulatorInstallProgressPayload {
     pub emulator_id: String,
     pub file_name: String,
@@ -165,6 +173,50 @@ pub fn resolve_emulator_executable(
             definition.name,
             install_dir.to_string_lossy()
         )
+    })
+}
+
+pub fn uninstall_emulator(
+    paths: &PortablePaths,
+    emulator_id: &str,
+) -> Result<UninstallResult, String> {
+    let definition = get_emulator_definition(emulator_id)
+        .ok_or_else(|| format!("Emulateur non supporte: {}", emulator_id))?;
+    let emu_root = PathBuf::from(&paths.emu);
+    let install_dir = emu_root.join(definition.install_dir_name);
+    let install_path = install_dir.to_string_lossy().to_string();
+
+    if !install_dir.exists() {
+        return Ok(UninstallResult {
+            emulator_id: definition.id.to_string(),
+            install_path,
+            removed: false,
+        });
+    }
+
+    if !install_dir.is_dir() {
+        return Err(format!(
+            "Le chemin d'installation n'est pas un dossier: {}",
+            install_path
+        ));
+    }
+
+    let canonical_emu_root = fs::canonicalize(&emu_root)
+        .map_err(|error| format!("Impossible de verifier le dossier Emu: {}", error))?;
+    let canonical_install_dir = fs::canonicalize(&install_dir)
+        .map_err(|error| format!("Impossible de verifier l'installation: {}", error))?;
+
+    if !canonical_install_dir.starts_with(&canonical_emu_root) {
+        return Err("Desinstallation refusee: dossier hors de Emu.".to_string());
+    }
+
+    fs::remove_dir_all(&canonical_install_dir)
+        .map_err(|error| format!("Impossible de supprimer l'emulateur: {}", error))?;
+
+    Ok(UninstallResult {
+        emulator_id: definition.id.to_string(),
+        install_path,
+        removed: true,
     })
 }
 

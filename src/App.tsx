@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import LibraryPanel from "./components/LibraryPanel";
 import RommConnectionCard from "./components/RommConnectionCard";
@@ -28,6 +29,7 @@ import type {
   ConfigureResult,
   ControllerProfile,
   ControllerProfileSaveResult,
+  DeleteLocalRomResult,
   DownloadResult,
   EmulatorEntry,
   GameLaunchResult,
@@ -35,8 +37,11 @@ import type {
   LaunchResult,
   LocalRomEntry,
   LocalSaveEntry,
+  ManualImportPlatform,
+  ManualImportResult,
   PortablePaths,
-  SaveSyncStatus
+  SaveSyncStatus,
+  UninstallResult
 } from "./types";
 
 const fallbackPaths = buildPortablePaths(".");
@@ -45,6 +50,28 @@ const LAUNCH_STARTUP_LOCK_MS = 1800;
 const NOTIFICATION_TTL_MS = 5000;
 const NOTIFICATION_EXIT_MS = 220;
 const MAX_NOTIFICATION_HISTORY = 80;
+const DUPLICATE_IMPORT_PREFIX = "DUPLICATE_IMPORT:";
+const SUPPORTED_MANUAL_IMPORT_EXTENSIONS = new Set([
+  "zip",
+  "rar",
+  "iso",
+  "rvz",
+  "wbfs",
+  "gcz",
+  "ciso",
+  "nds",
+  "3ds",
+  "cci",
+  "cia",
+  "3dsx",
+  "xci",
+  "nsp",
+  "nro",
+  "cue",
+  "bin",
+  "img",
+  "chd"
+]);
 
 const initialPaths: PortablePaths = {
   ...fallbackPaths,
@@ -77,6 +104,24 @@ export default function App() {
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
   const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
   const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
+  const [manualImportPlatforms, setManualImportPlatforms] = useState<ManualImportPlatform[]>([]);
+  const [manualImportDragActive, setManualImportDragActive] = useState(false);
+  const [pendingManualImport, setPendingManualImport] = useState<{
+    sourcePath: string;
+    fileName: string;
+    conflictMessage?: string;
+  } | null>(null);
+  const [manualImportPlatformId, setManualImportPlatformId] = useState("");
+  const [manualImportError, setManualImportError] = useState<string | null>(null);
+  const [manualImporting, setManualImporting] = useState(false);
+  const [pendingDeleteRom, setPendingDeleteRom] = useState<{
+    romPath: string;
+    title: string;
+    fileName: string;
+  } | null>(null);
+  const [deletingRomPath, setDeletingRomPath] = useState<string | null>(null);
+  const [pendingUninstallEmulator, setPendingUninstallEmulator] = useState<EmulatorEntry | null>(null);
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null);
   const [controllerProfiles, setControllerProfiles] = useState<ControllerProfile[]>([]);
   const [saveSyncStatuses, setSaveSyncStatuses] = useState<Record<string, SaveSyncStatus>>({});
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
@@ -204,6 +249,12 @@ export default function App() {
         });
         setConfig(savedConfig);
         configRef.current = savedConfig;
+
+        const importPlatforms = await invoke<ManualImportPlatform[]>(
+          "get_manual_import_platforms_command"
+        );
+        setManualImportPlatforms(importPlatforms);
+        setManualImportPlatformId(importPlatforms[0]?.id ?? "");
 
         await refreshLocalRoms(portablePaths.root);
         await refreshLocalSaves(portablePaths.root);
@@ -461,36 +512,292 @@ export default function App() {
     setNotificationHistory([]);
   };
 
-  const removeInstalledFlag = async (id: string) => {
-    void debugLog("info", "emulator", `Removing installed flag for ${id}`);
-    const nextInstalledIds = configRef.current.installedEmulators.filter((entry) => entry !== id);
-    const nextConfig: AppConfig = {
-      ...configRef.current,
-      installedEmulators: nextInstalledIds
-    };
-
-    await persistConfig(nextConfig);
-
-    const nextEmulators = emulators.map((emu) =>
-      emu.id === id
-        ? {
-            ...emu,
-            status: "not_installed" as const
-          }
-        : emu
-    );
-
-    setEmulators(nextEmulators);
-
-    if (selectedEmulatorId === id) {
-      const replacement = nextEmulators.find((entry) => entry.status === "installed");
-      setSelectedEmulatorId(replacement?.id ?? null);
+  const handleManualImportDrop = (droppedPaths: string[]) => {
+    if (droppedPaths.length !== 1) {
+      const message = "Drop one ROM or archive at a time.";
+      setLibraryNotice({ type: "error", message });
+      notify("error", message);
+      void debugLog("warning", "manual-import", "Rejected multi-file drop", {
+        droppedCount: droppedPaths.length
+      });
+      return;
     }
 
-    notify("info", `Removed ${id} from the installed list. Existing files were not deleted.`);
-    void debugLog("success", "emulator", `Removed installed flag for ${id}`, {
-      remainingInstalledEmulators: nextInstalledIds
+    const sourcePath = droppedPaths[0];
+    const fileName = getPathFileName(sourcePath);
+
+    if (!isSupportedManualImportFile(fileName)) {
+      const message = "Unsupported file. Drop a ROM, .zip, or .rar archive.";
+      setLibraryNotice({ type: "error", message });
+      notify("error", message);
+      void debugLog("warning", "manual-import", "Rejected unsupported file", {
+        sourcePath
+      });
+      return;
+    }
+
+    const nextPlatformId = manualImportPlatformId || manualImportPlatforms[0]?.id || "";
+    setManualImportPlatformId(nextPlatformId);
+    setManualImportError(null);
+    setPendingManualImport({
+      sourcePath,
+      fileName
     });
+    void debugLog("info", "manual-import", "Manual import file dropped", {
+      sourcePath,
+      fileName
+    });
+  };
+
+  const closeManualImportModal = () => {
+    if (manualImporting) {
+      return;
+    }
+
+    setPendingManualImport(null);
+    setManualImportError(null);
+  };
+
+  const importPendingManualRom = async (overwrite = false) => {
+    if (!pendingManualImport || !manualImportPlatformId) {
+      return;
+    }
+
+    try {
+      setManualImporting(true);
+      setManualImportError(null);
+      void debugLog("info", "manual-import", "Starting manual ROM import", {
+        sourcePath: pendingManualImport.sourcePath,
+        platformId: manualImportPlatformId,
+        overwrite
+      });
+
+      const result = await invoke<ManualImportResult>("import_local_rom_command", {
+        root: paths.root,
+        request: {
+          sourcePath: pendingManualImport.sourcePath,
+          platformId: manualImportPlatformId,
+          overwrite
+        }
+      });
+
+      await refreshLocalRoms(paths.root);
+      await refreshLocalSaves(paths.root);
+
+      const importCount = result.importedRoms.length;
+      const message =
+        importCount === 1
+          ? `Imported ${result.importedRoms[0].fileName} to Roms/${result.platformId}.`
+          : `Imported ${importCount} ROMs to Roms/${result.platformId}.`;
+
+      setLibraryNotice({
+        type: "success",
+        message
+      });
+      notify("success", message);
+      setPendingManualImport(null);
+      void debugLog("success", "manual-import", "Manual ROM import completed", result);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+
+      if (message.startsWith(DUPLICATE_IMPORT_PREFIX)) {
+        const conflictMessage = formatDuplicateImportMessage(message);
+        setPendingManualImport((current) =>
+          current
+            ? {
+                ...current,
+                conflictMessage
+              }
+            : current
+        );
+        void debugLog("warning", "manual-import", "Manual import duplicate detected", {
+          sourcePath: pendingManualImport.sourcePath,
+          conflictMessage
+        });
+        return;
+      }
+
+      setManualImportError(message);
+      setLibraryNotice({
+        type: "error",
+        message
+      });
+      notify("error", message);
+      void debugLog("error", "manual-import", "Manual ROM import failed", {
+        sourcePath: pendingManualImport.sourcePath,
+        message
+      });
+    } finally {
+      setManualImporting(false);
+    }
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenDragDrop: UnlistenFn | null = null;
+
+    const setupDragDrop = async () => {
+      try {
+        const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          if (event.payload.type === "enter" || event.payload.type === "over") {
+            setManualImportDragActive(true);
+            return;
+          }
+
+          if (event.payload.type === "leave") {
+            setManualImportDragActive(false);
+            return;
+          }
+
+          if (event.payload.type === "drop") {
+            setManualImportDragActive(false);
+            handleManualImportDrop(event.payload.paths);
+          }
+        });
+
+        if (disposed) {
+          unlisten();
+          return;
+        }
+
+        unlistenDragDrop = unlisten;
+      } catch (reason) {
+        void debugLog("warning", "manual-import", "File drag-drop listener unavailable", reason);
+      }
+    };
+
+    void setupDragDrop();
+
+    return () => {
+      disposed = true;
+      if (unlistenDragDrop) {
+        unlistenDragDrop();
+      }
+    };
+  }, [manualImportPlatforms, manualImportPlatformId]);
+
+  const requestDeleteLocalRom = (romPath: string, title: string) => {
+    setPendingDeleteRom({
+      romPath,
+      title,
+      fileName: getPathFileName(romPath)
+    });
+  };
+
+  const closeDeleteRomModal = () => {
+    if (deletingRomPath) {
+      return;
+    }
+
+    setPendingDeleteRom(null);
+  };
+
+  const confirmDeleteLocalRom = async () => {
+    if (!pendingDeleteRom) {
+      return;
+    }
+
+    try {
+      setDeletingRomPath(pendingDeleteRom.romPath);
+      void debugLog("info", "library", "Deleting local ROM", {
+        romPath: pendingDeleteRom.romPath
+      });
+
+      const result = await invoke<DeleteLocalRomResult>("delete_local_rom_command", {
+        root: paths.root,
+        romPath: pendingDeleteRom.romPath
+      });
+
+      await refreshLocalRoms(paths.root);
+      await refreshLocalSaves(paths.root);
+      setLibraryNotice({
+        type: "success",
+        message: `Deleted ${result.fileName}.`
+      });
+      notify("success", `Deleted ${result.fileName}.`);
+      setPendingDeleteRom(null);
+      void debugLog("success", "library", "Local ROM deleted", result);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setLibraryNotice({ type: "error", message });
+      notify("error", message);
+      void debugLog("error", "library", "Local ROM delete failed", {
+        romPath: pendingDeleteRom.romPath,
+        message
+      });
+    } finally {
+      setDeletingRomPath(null);
+    }
+  };
+
+  const requestUninstallEmulator = (emulator: EmulatorEntry) => {
+    setPendingUninstallEmulator(emulator);
+  };
+
+  const closeUninstallEmulatorModal = () => {
+    if (uninstallingId) {
+      return;
+    }
+
+    setPendingUninstallEmulator(null);
+  };
+
+  const confirmUninstallEmulator = async () => {
+    if (!pendingUninstallEmulator) {
+      return;
+    }
+
+    const { id, name } = pendingUninstallEmulator;
+
+    try {
+      setUninstallingId(id);
+      void debugLog("info", "emulator-uninstall", `Uninstalling emulator ${id}`, {
+        root: paths.root
+      });
+
+      const result = await invoke<UninstallResult>("uninstall_emulator_command", {
+        root: paths.root,
+        emulatorId: id
+      });
+
+      const nextInstalledIds = configRef.current.installedEmulators.filter((entry) => entry !== id);
+      const nextConfig: AppConfig = {
+        ...configRef.current,
+        installedEmulators: nextInstalledIds
+      };
+
+      await persistConfig(nextConfig);
+
+      const nextEmulators = emulators.map((emu) =>
+        emu.id === id
+          ? {
+              ...emu,
+              status: "not_installed" as const
+            }
+          : emu
+      );
+
+      setEmulators(nextEmulators);
+
+      if (selectedEmulatorId === id) {
+        const replacement = nextEmulators.find((entry) => entry.status === "installed");
+        setSelectedEmulatorId(replacement?.id ?? null);
+      }
+
+      await refreshInstalledVersions(paths.root);
+      setPendingUninstallEmulator(null);
+      notify(
+        "success",
+        result.removed ? `Uninstalled ${name}.` : `${name} was already absent from disk.`
+      );
+      void debugLog("success", "emulator-uninstall", `Uninstalled emulator ${id}`, result);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "emulator-uninstall", `Uninstall failed for ${id}`, message);
+    } finally {
+      setUninstallingId(null);
+    }
   };
 
   const clearLaunchingEmulator = (id: string, delayMs = 0) => {
@@ -770,7 +1077,7 @@ export default function App() {
     }
   };
 
-  const launchSpecificRom = async (romPath: string) => {
+  const launchSpecificRom = async (romPath: string, localOnly = false) => {
     if (runningRomPathsRef.current[romPath]) {
       void debugLog("debug", "game-launch", "Ignored duplicate ROM launch while already running", {
         romPath
@@ -788,18 +1095,23 @@ export default function App() {
     let launched = false;
 
     try {
-      void debugLog("info", "game-launch", "Launching ROM", { romPath });
+      void debugLog("info", "game-launch", "Launching ROM", { romPath, localOnly });
       const result = await invoke<GameLaunchResult>("launch_game_auto_command", {
         root: paths.root,
         romPath,
-        rommSession: rommSession
+        rommSession: !localOnly && rommSession
           ? ({
               baseUrl: rommSession.baseUrl,
               token: rommSession.token
             } satisfies RommLaunchSession)
           : null
       });
-      notify("success", `Session ${result.emulatorId} terminée et synchronisée pour ${result.romPath}`);
+      notify(
+        "success",
+        localOnly
+          ? `Session ${result.emulatorId} terminee en local pour ${result.romPath}`
+          : `Session ${result.emulatorId} terminee et synchronisee pour ${result.romPath}`
+      );
       void debugLog("success", "game-launch", `ROM session completed with ${result.emulatorId}`, result);
       launched = true;
       await refreshLocalRoms(paths.root);
@@ -919,9 +1231,12 @@ export default function App() {
           saveSyncStatuses={saveSyncStatuses}
           onDownloadGame={handleDownloadGame}
           onLaunchLocalRom={launchSpecificRom}
+          onRequestDeleteLocalRom={requestDeleteLocalRom}
           downloadProgressById={downloadProgressById}
           runningRomPaths={runningRomPaths}
           notice={libraryNotice}
+          manualImportDragActive={manualImportDragActive}
+          pendingManualImportFileName={pendingManualImport?.fileName ?? null}
         />
       </main>
 
@@ -955,7 +1270,7 @@ export default function App() {
                     </div>
                     <button
                       className="primary-button picker-action-button"
-                      disabled={isInstalling}
+                      disabled={isInstalling || uninstallingId === emu.id}
                       style={
                         isInstalling
                           ? {
@@ -970,18 +1285,160 @@ export default function App() {
                           : undefined
                       }
                       onClick={() =>
-                        void (isInstalled ? removeInstalledFlag(emu.id) : installSelectedEmulator(emu.id))
+                        void (isInstalled ? requestUninstallEmulator(emu) : installSelectedEmulator(emu.id))
                       }
                     >
-                      {isInstalling
-                        ? `Installing... ${Math.round(visibleInstallPercent)}%`
-                        : isInstalled
-                          ? "Remove"
-                          : "Install"}
+                      {uninstallingId === emu.id
+                        ? "Uninstalling..."
+                        : isInstalling
+                          ? `Installing... ${Math.round(visibleInstallPercent)}%`
+                          : isInstalled
+                            ? "Uninstall"
+                            : "Install"}
                     </button>
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingDeleteRom ? (
+        <div className="modal-backdrop" onClick={closeDeleteRomModal}>
+          <div className="modal confirmation-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Delete ROM?</h2>
+                <p className="panel-subtitle">{pendingDeleteRom.title}</p>
+              </div>
+              <button className="ghost-button" disabled={Boolean(deletingRomPath)} onClick={closeDeleteRomModal}>
+                Close
+              </button>
+            </div>
+            <p className="confirmation-copy">
+              This will permanently delete {pendingDeleteRom.fileName} from the local ROM folder.
+            </p>
+            <div className="confirmation-actions">
+              <button className="ghost-button" disabled={Boolean(deletingRomPath)} onClick={closeDeleteRomModal}>
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={Boolean(deletingRomPath)}
+                onClick={() => void confirmDeleteLocalRom()}
+              >
+                {deletingRomPath ? "Deleting..." : "Delete ROM"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingUninstallEmulator ? (
+        <div className="modal-backdrop" onClick={closeUninstallEmulatorModal}>
+          <div className="modal confirmation-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Uninstall emulator?</h2>
+                <p className="panel-subtitle">
+                  {pendingUninstallEmulator.name} - {pendingUninstallEmulator.platformLabel}
+                </p>
+              </div>
+              <button className="ghost-button" disabled={Boolean(uninstallingId)} onClick={closeUninstallEmulatorModal}>
+                Close
+              </button>
+            </div>
+            <p className="confirmation-copy">
+              This will permanently delete the emulator installation from disk.
+            </p>
+            <div className="confirmation-actions">
+              <button className="ghost-button" disabled={Boolean(uninstallingId)} onClick={closeUninstallEmulatorModal}>
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={Boolean(uninstallingId)}
+                onClick={() => void confirmUninstallEmulator()}
+              >
+                {uninstallingId ? "Uninstalling..." : "Uninstall"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingManualImport ? (
+        <div className="modal-backdrop" onClick={closeManualImportModal}>
+          <div className="modal manual-import-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Which platform is this ROM for?</h2>
+                <p className="panel-subtitle">{pendingManualImport.fileName}</p>
+              </div>
+              <button className="ghost-button" disabled={manualImporting} onClick={closeManualImportModal}>
+                Close
+              </button>
+            </div>
+
+            <div className="manual-import-platform-grid" role="listbox" aria-label="ROM platform">
+              {manualImportPlatforms.map((platform) => {
+                const isSelected = platform.id === manualImportPlatformId;
+
+                return (
+                  <button
+                    key={platform.id}
+                    className={`manual-import-platform-option ${
+                      isSelected ? "manual-import-platform-option-active" : ""
+                    }`}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    disabled={manualImporting}
+                    onClick={() => {
+                      setManualImportPlatformId(platform.id);
+                      setManualImportError(null);
+                      setPendingManualImport((current) =>
+                        current
+                          ? {
+                              ...current,
+                              conflictMessage: undefined
+                            }
+                          : current
+                      );
+                    }}
+                  >
+                    {platform.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {pendingManualImport.conflictMessage ? (
+              <div className="inline-notice inline-notice-warning manual-import-conflict">
+                {pendingManualImport.conflictMessage}
+              </div>
+            ) : null}
+
+            {manualImportError ? (
+              <p className="form-message error-message manual-import-error">{manualImportError}</p>
+            ) : null}
+
+            <div className="manual-import-modal-actions">
+              <button className="ghost-button" disabled={manualImporting} onClick={closeManualImportModal}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={manualImporting || !manualImportPlatformId}
+                onClick={() => void importPendingManualRom(Boolean(pendingManualImport.conflictMessage))}
+              >
+                {manualImporting
+                  ? "Importing..."
+                  : pendingManualImport.conflictMessage
+                    ? "Overwrite"
+                    : "Import"}
+              </button>
             </div>
           </div>
         </div>
@@ -1005,6 +1462,33 @@ function normalizeDownloadPercent(value: number | undefined): number {
   }
 
   return Math.min(100, Math.max(0, value));
+}
+
+function getPathFileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function isSupportedManualImportFile(fileName: string): boolean {
+  const extension = fileName.split(".").pop()?.toLowerCase();
+  return Boolean(extension && SUPPORTED_MANUAL_IMPORT_EXTENSIONS.has(extension));
+}
+
+function formatDuplicateImportMessage(rawMessage: string): string {
+  const conflicts = rawMessage
+    .slice(DUPLICATE_IMPORT_PREFIX.length)
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (!conflicts.length) {
+    return "A ROM with this file name already exists. Overwrite it?";
+  }
+
+  if (conflicts.length === 1) {
+    return `A ROM already exists at ${conflicts[0]}. Overwrite it?`;
+  }
+
+  return `These ROMs already exist:\n${conflicts.join("\n")}\nOverwrite them?`;
 }
 
 async function openDebugWindow(): Promise<void> {

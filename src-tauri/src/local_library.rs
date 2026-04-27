@@ -21,6 +21,13 @@ pub struct LocalSaveEntry {
     pub platform_guess: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLocalRomResult {
+    pub file_name: String,
+    pub file_path: String,
+}
+
 pub fn list_local_roms(paths: &PortablePaths) -> Result<Vec<LocalRomEntry>, String> {
     let roms_dir = PathBuf::from(&paths.roms);
     if !roms_dir.exists() {
@@ -60,6 +67,49 @@ pub fn list_local_saves(paths: &PortablePaths) -> Result<Vec<LocalSaveEntry>, St
     });
 
     Ok(results)
+}
+
+pub fn delete_local_rom(
+    paths: &PortablePaths,
+    rom_path: &str,
+) -> Result<DeleteLocalRomResult, String> {
+    let roms_dir = PathBuf::from(&paths.roms);
+    let rom_path = PathBuf::from(rom_path);
+
+    if !rom_path.exists() {
+        return Err("ROM introuvable.".to_string());
+    }
+
+    if !rom_path.is_file() {
+        return Err("Seuls les fichiers ROM peuvent etre supprimes.".to_string());
+    }
+
+    if !is_rom_file(&rom_path) {
+        return Err("Ce fichier n'est pas reconnu comme une ROM.".to_string());
+    }
+
+    let canonical_roms_dir = fs::canonicalize(&roms_dir)
+        .map_err(|error| format!("Impossible de verifier le dossier Roms: {}", error))?;
+    let canonical_rom_path = fs::canonicalize(&rom_path)
+        .map_err(|error| format!("Impossible de verifier la ROM: {}", error))?;
+
+    if !canonical_rom_path.starts_with(&canonical_roms_dir) {
+        return Err("Suppression refusee: la ROM n'est pas dans le dossier Roms.".to_string());
+    }
+
+    let file_name = canonical_rom_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let file_path = canonical_rom_path.to_string_lossy().to_string();
+
+    fs::remove_file(&canonical_rom_path)
+        .map_err(|error| format!("Impossible de supprimer la ROM: {}", error))?;
+
+    Ok(DeleteLocalRomResult {
+        file_name,
+        file_path,
+    })
 }
 
 fn collect_roms(root: &Path, dir: &Path, output: &mut Vec<LocalRomEntry>) -> Result<(), String> {

@@ -357,7 +357,17 @@ export default function ControllerMappingPanel({
     keyboardDevice;
   const supportsMouseBinding = selectedEmulator?.id === "dolphin";
 
+  const emulatedControllerIdRef = useRef(emulatedControllerId);
+  const selectedPhysicalDeviceIdRef = useRef(selectedPhysicalDeviceId);
   const selectedPhysicalDeviceRef = useRef(selectedPhysicalDevice);
+
+  useEffect(() => {
+    emulatedControllerIdRef.current = emulatedControllerId;
+  }, [emulatedControllerId]);
+
+  useEffect(() => {
+    selectedPhysicalDeviceIdRef.current = selectedPhysicalDeviceId;
+  }, [selectedPhysicalDeviceId]);
 
   useEffect(() => {
     selectedPhysicalDeviceRef.current = selectedPhysicalDevice;
@@ -404,9 +414,21 @@ export default function ControllerMappingPanel({
     }
 
     const nextControllers = getCompatibleControllers(selectedEmulator.id);
-    const storedProfile = profiles.find((profile) => profile.emulatorId === selectedEmulator.id) ?? null;
+    const currentController =
+      nextControllers.find((entry) => entry.id === emulatedControllerIdRef.current) ?? null;
+    const storedProfile = currentController
+      ? findMatchingProfile(
+          profiles,
+          selectedEmulator.id,
+          currentController.id,
+          selectedPhysicalDeviceIdRef.current
+        )
+      : profiles.find((profile) => profile.emulatorId === selectedEmulator.id) ?? null;
     const nextController =
-      resolveControllerFromProfile(storedProfile, nextControllers) ?? nextControllers[0] ?? null;
+      resolveControllerFromProfile(storedProfile, nextControllers) ??
+      currentController ??
+      nextControllers[0] ??
+      null;
 
     if (!nextController) {
       return;
@@ -420,6 +442,9 @@ export default function ControllerMappingPanel({
       setSavedPhysicalDeviceLabel(storedProfile.physicalDeviceLabel);
       setDolphinSettings(storedProfile.dolphinSettings ?? defaultDolphinSettings);
       setBindings(mergeBindingsForController(nextController, storedProfile.bindings));
+    } else if (currentController) {
+      setListeningInputId(null);
+      return;
     } else {
       setProfileName(`${selectedEmulator.name} - ${nextController.label}`);
       setSelectedPhysicalDeviceId(keyboardDevice.id);

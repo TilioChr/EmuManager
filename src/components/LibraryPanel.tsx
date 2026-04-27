@@ -16,13 +16,16 @@ interface LibraryPanelProps {
   localRoms: LocalRomEntry[];
   saveSyncStatuses: Record<string, SaveSyncStatus>;
   onDownloadGame: (game: RommGame) => Promise<void>;
-  onLaunchLocalRom: (romPath: string) => Promise<void>;
+  onLaunchLocalRom: (romPath: string, localOnly?: boolean) => Promise<void>;
+  onRequestDeleteLocalRom: (romPath: string, title: string) => void;
   downloadProgressById?: Record<string, number>;
   runningRomPaths?: Record<string, boolean>;
   notice?: {
     type: "success" | "error" | "info";
     message: string;
   } | null;
+  manualImportDragActive?: boolean;
+  pendingManualImportFileName?: string | null;
 }
 
 interface LibraryItem {
@@ -35,6 +38,7 @@ interface LibraryItem {
   rommId?: string;
   localSaveStatus?: SaveSyncStatus;
   remoteGame?: RommGame;
+  localOnly: boolean;
 }
 
 export default function LibraryPanel({
@@ -43,9 +47,12 @@ export default function LibraryPanel({
   saveSyncStatuses,
   onDownloadGame,
   onLaunchLocalRom,
+  onRequestDeleteLocalRom,
   downloadProgressById = {},
   runningRomPaths = {},
-  notice = null
+  notice = null,
+  manualImportDragActive = false,
+  pendingManualImportFileName = null
 }: LibraryPanelProps) {
   const [games, setGames] = useState<RommGame[]>([]);
   const [remoteSaveStatuses, setRemoteSaveStatuses] = useState<Record<string, RommSaveEntry | null>>({});
@@ -89,7 +96,8 @@ export default function LibraryPanel({
         localPath: localMatch?.filePath,
         rommId,
         localSaveStatus: localMatch ? saveSyncStatuses[localMatch.filePath] : undefined,
-        remoteGame: game
+        remoteGame: game,
+        localOnly: false
       };
     });
 
@@ -117,7 +125,8 @@ export default function LibraryPanel({
         downloaded: true,
         localPath: rom.filePath,
         rommId: saveSyncStatuses[rom.filePath]?.rommId ?? undefined,
-        localSaveStatus: saveSyncStatuses[rom.filePath]
+        localSaveStatus: saveSyncStatuses[rom.filePath],
+        localOnly: !saveSyncStatuses[rom.filePath]?.rommId
       }));
 
     return [...remoteItems, ...localOnlyItems].sort((left, right) => {
@@ -250,6 +259,18 @@ export default function LibraryPanel({
         </button>
       }
     >
+      <div
+        className={`manual-import-zone ${
+          manualImportDragActive ? "manual-import-zone-active" : ""
+        }`}
+      >
+        <span className="manual-import-zone-icon" aria-hidden="true" />
+        <div>
+          <strong>{manualImportDragActive ? "Release to import" : "Drop local ROM"}</strong>
+          <p>{pendingManualImportFileName ?? "ROM, .zip, or .rar"}</p>
+        </div>
+      </div>
+
       <div className="library-toolbar library-toolbar-grid">
         <input
           value={search}
@@ -300,7 +321,15 @@ export default function LibraryPanel({
           return (
             <div key={item.id} className="library-item">
               <div>
-                <strong>{item.title}</strong>
+                <div className="library-title-row">
+                  <strong>{item.title}</strong>
+                  {item.localOnly ? (
+                    <span className="local-only-badge" title="Local-only ROM">
+                      <span aria-hidden="true" />
+                      Local
+                    </span>
+                  ) : null}
+                </div>
                 <p>
                   {item.platform}
                   {item.downloaded ? " • downloaded" : ""}
@@ -314,12 +343,14 @@ export default function LibraryPanel({
                       : "none"}
                   </small>
                   <small>
-                    RomM save:{" "}
-                    {formatRemoteSaveValue(
-                      session,
-                      item.localSaveStatus?.lastKnownRemoteSaveAt ?? null,
-                      item.rommId ? remoteSaveStatuses[item.rommId] ?? null : null
-                    )}
+                    RomM sync:{" "}
+                    {item.localOnly
+                      ? "blocked (local only)"
+                      : formatRemoteSaveValue(
+                          session,
+                          item.localSaveStatus?.lastKnownRemoteSaveAt ?? null,
+                          item.rommId ? remoteSaveStatuses[item.rommId] ?? null : null
+                        )}
                   </small>
                 </div>
               </div>
@@ -330,7 +361,7 @@ export default function LibraryPanel({
                     className="primary-button compact-button launch-action-button"
                     disabled={isRunning}
                     aria-busy={isRunning}
-                    onClick={() => void onLaunchLocalRom(item.localPath!)}
+                    onClick={() => void onLaunchLocalRom(item.localPath!, item.localOnly)}
                   >
                     <span className="button-content">
                       {isRunning ? (
@@ -342,6 +373,15 @@ export default function LibraryPanel({
                         "Launch"
                       )}
                     </span>
+                  </button>
+                ) : null}
+                {item.downloaded && item.localPath ? (
+                  <button
+                    className="danger-button compact-button delete-rom-button"
+                    disabled={isRunning}
+                    onClick={() => onRequestDeleteLocalRom(item.localPath!, item.title)}
+                  >
+                    Delete
                   </button>
                 ) : null}
 

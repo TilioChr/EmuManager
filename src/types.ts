@@ -37,6 +37,12 @@ export interface InstallResult {
   archivePath: string;
 }
 
+export interface UninstallResult {
+  emulatorId: string;
+  installPath: string;
+  removed: boolean;
+}
+
 export interface ConfigureResult {
   emulatorId: string;
   portableFilePath: string;
@@ -57,6 +63,31 @@ export interface DownloadResult {
   filePath: string;
   fileName: string;
   bytesWritten: number;
+}
+
+export interface DeleteLocalRomResult {
+  fileName: string;
+  filePath: string;
+}
+
+export interface ManualImportPlatform {
+  id: string;
+  label: string;
+  folder: string;
+}
+
+export interface ManualImportedRom {
+  fileName: string;
+  filePath: string;
+  fileSizeBytes: number;
+}
+
+export interface ManualImportResult {
+  platformId: string;
+  platformLabel: string;
+  targetDirectory: string;
+  sourceKind: "rom" | "zip" | "rar";
+  importedRoms: ManualImportedRom[];
 }
 
 export interface GameLaunchResult {
