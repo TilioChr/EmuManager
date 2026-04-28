@@ -1,5 +1,5 @@
 use crate::emulator_installer::resolve_emulator_executable;
-use crate::platform_router::resolve_emulator_id_for_rom_path;
+use crate::emulator_resources::validate_required_resources;
 use crate::portable_paths::PortablePaths;
 use crate::romm_sync::{
     launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession,
@@ -23,6 +23,7 @@ pub fn launch_game(
     rom_path: &str,
     romm_session: Option<&RommLaunchSession>,
 ) -> Result<GameLaunchResult, String> {
+    validate_required_resources(paths, emulator_id)?;
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
 
     let rom = PathBuf::from(rom_path);
@@ -78,13 +79,4 @@ pub fn launch_game(
         rom_path: rom.to_string_lossy().to_string(),
         launched: true,
     })
-}
-
-pub fn launch_game_auto_with_session(
-    paths: &PortablePaths,
-    rom_path: &str,
-    romm_session: Option<&RommLaunchSession>,
-) -> Result<GameLaunchResult, String> {
-    let emulator_id = resolve_emulator_id_for_rom_path(paths, rom_path)?;
-    launch_game(paths, &emulator_id, rom_path, romm_session)
 }

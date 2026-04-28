@@ -10,6 +10,7 @@ mod eden_controller_writer;
 mod emulator_configurator;
 mod emulator_installer;
 mod emulator_registry;
+mod emulator_resources;
 mod game_launcher;
 mod local_library;
 mod manual_import;
@@ -31,7 +32,12 @@ use emulator_installer::{
     InstallResult, UninstallResult,
 };
 use emulator_registry::{built_in_emulators, EmulatorDefinition};
-use game_launcher::{launch_game, launch_game_auto_with_session, GameLaunchResult};
+use emulator_resources::{
+    ensure_local_resource_configuration, install_required_resources,
+    list_emulator_resource_summaries, validate_required_resources, EmulatorResourceSummary,
+    ResourceInstallResult, RommResourceSession,
+};
+use game_launcher::{launch_game, GameLaunchResult};
 use local_library::{
     delete_local_rom, list_local_roms, list_local_saves, DeleteLocalRomResult, LocalRomEntry,
     LocalSaveEntry,
@@ -43,7 +49,10 @@ use manual_import::{
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult, DownloadRomRequest};
-use romm_sync::{get_save_sync_statuses, register_rom_mapping, RommLaunchSession, SaveSyncStatus};
+use romm_sync::{
+    get_save_conflict_status, get_save_sync_statuses, register_rom_mapping, RommLaunchSession,
+    SaveConflictStatus, SaveSyncStatus,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -202,6 +211,37 @@ fn check_emulator_installed(root: Option<String>, emulator_id: String) -> Result
 }
 
 #[tauri::command]
+fn get_emulator_resource_statuses_command(
+    root: Option<String>,
+) -> Result<Vec<EmulatorResourceSummary>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    Ok(list_emulator_resource_summaries(&paths))
+}
+
+#[tauri::command]
+async fn install_emulator_resources_command(
+    app: tauri::AppHandle,
+    root: Option<String>,
+    emulator_id: String,
+    romm_session: RommResourceSession,
+) -> Result<ResourceInstallResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    install_required_resources(&app, &paths, &emulator_id, &romm_session).await
+}
+
+#[tauri::command]
+fn resolve_emulator_id_for_rom_command(
+    root: Option<String>,
+    rom_path: String,
+) -> Result<String, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    platform_router::resolve_emulator_id_for_rom_path(&paths, &rom_path)
+}
+
+#[tauri::command]
 async fn install_emulator_command(
     app: tauri::AppHandle,
     root: Option<String>,
@@ -311,6 +351,7 @@ async fn launch_emulator_command(
 ) -> Result<LaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
+    let _ = ensure_local_resource_configuration(&paths, &emulator_id);
     let emulator_id_for_launch = emulator_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         launch_emulator(&paths, &emulator_id_for_launch)
@@ -411,6 +452,17 @@ fn get_save_sync_statuses_command(
 }
 
 #[tauri::command]
+fn get_save_conflict_status_command(
+    root: Option<String>,
+    rom_path: String,
+    romm_session: RommLaunchSession,
+) -> Result<Option<SaveConflictStatus>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    get_save_conflict_status(&paths, &romm_session, &rom_path)
+}
+
+#[tauri::command]
 async fn launch_game_command(
     app: tauri::AppHandle,
     root: Option<String>,
@@ -420,6 +472,18 @@ async fn launch_game_command(
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
+    ensure_local_resource_configuration(&paths, &emulator_id)?;
+
+    if let Some(session) = romm_session.as_ref() {
+        let resource_session = RommResourceSession {
+            base_url: session.base_url.clone(),
+            token: session.token.clone(),
+        };
+        install_required_resources(&app, &paths, &emulator_id, &resource_session).await?;
+    } else {
+        validate_required_resources(&paths, &emulator_id)?;
+    }
+
     let emulator_id_for_launch = emulator_id.clone();
     let rom_path_for_launch = rom_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -446,9 +510,29 @@ async fn launch_game_auto_command(
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
+    let emulator_id_for_launch = platform_router::resolve_emulator_id_for_rom_path(&paths, &rom_path)?;
+    ensure_local_resource_configuration(&paths, &emulator_id_for_launch)?;
+
+    if let Some(session) = romm_session.as_ref() {
+        let resource_session = RommResourceSession {
+            base_url: session.base_url.clone(),
+            token: session.token.clone(),
+        };
+        install_required_resources(&app, &paths, &emulator_id_for_launch, &resource_session)
+            .await?;
+    } else {
+        validate_required_resources(&paths, &emulator_id_for_launch)?;
+    }
+
     let rom_path_for_launch = rom_path.clone();
+    let emulator_id_for_result = emulator_id_for_launch.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        launch_game_auto_with_session(&paths, &rom_path_for_launch, romm_session.as_ref())
+        launch_game(
+            &paths,
+            &emulator_id_for_launch,
+            &rom_path_for_launch,
+            romm_session.as_ref(),
+        )
     })
     .await
     .map_err(|error| format!("Lancement du jeu interrompu: {}", error))?;
@@ -456,7 +540,7 @@ async fn launch_game_auto_command(
     let emulator_id = result
         .as_ref()
         .map(|launch| launch.emulator_id.as_str())
-        .unwrap_or("auto");
+        .unwrap_or(emulator_id_for_result.as_str());
     log_game_launch_result(&app, &result, emulator_id, &rom_path);
     result
 }
@@ -502,6 +586,9 @@ fn main() {
             list_local_saves_command,
             delete_local_rom_command,
             check_emulator_installed,
+            get_emulator_resource_statuses_command,
+            install_emulator_resources_command,
+            resolve_emulator_id_for_rom_command,
             install_emulator_command,
             uninstall_emulator_command,
             configure_emulator_command,
@@ -509,6 +596,7 @@ fn main() {
             download_rom_command,
             register_romm_rom_command,
             get_save_sync_statuses_command,
+            get_save_conflict_status_command,
             get_manual_import_platforms_command,
             import_local_rom_command,
             launch_game_command,

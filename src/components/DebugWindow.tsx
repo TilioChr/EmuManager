@@ -6,6 +6,7 @@ import {
   type DebugLogEntry,
   type DebugLogLevel
 } from "../lib/debugLog";
+import WindowTitlebar from "./WindowTitlebar";
 
 const levelOptions: Array<DebugLogLevel | "all"> = [
   "all",
@@ -84,7 +85,9 @@ export default function DebugWindow() {
   }, [levelFilter, logs, search]);
 
   return (
-    <main className="debug-shell">
+    <div className="window-shell">
+      <WindowTitlebar />
+      <main className="debug-shell">
       <header className="debug-header">
         <div>
           <h1>Debug Logs</h1>
@@ -154,7 +157,8 @@ export default function DebugWindow() {
         ) : null}
         <div ref={endRef} />
       </section>
-    </main>
+      </main>
+    </div>
   );
 }
 

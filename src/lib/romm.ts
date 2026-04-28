@@ -12,6 +12,7 @@ export interface RommSession {
 export interface RommLaunchSession {
   baseUrl: string;
   token: string;
+  saveConflictResolution?: "useLocal" | "useRomm";
 }
 
 export interface RommPlatform {

@@ -10,6 +10,7 @@ import NotificationOverlay, {
   type NotificationEntry,
   type NotificationKind
 } from "./components/NotificationOverlay";
+import WindowTitlebar from "./components/WindowTitlebar";
 import {
   debugLog,
   recordDebugLogEntry,
@@ -32,6 +33,7 @@ import type {
   DeleteLocalRomResult,
   DownloadResult,
   EmulatorEntry,
+  EmulatorResourceSummary,
   GameLaunchResult,
   InstallResult,
   LaunchResult,
@@ -40,6 +42,9 @@ import type {
   ManualImportPlatform,
   ManualImportResult,
   PortablePaths,
+  ResourceInstallResult,
+  SaveConflictResolution,
+  SaveConflictStatus,
   SaveSyncStatus,
   UninstallResult
 } from "./types";
@@ -95,6 +100,15 @@ interface EmulatorInstallProgressPayload {
   percent: number;
 }
 
+interface EmulatorResourceProgressPayload {
+  emulatorId: string;
+  resourceId: string;
+  resourceLabel: string;
+  stage: string;
+  message: string;
+  percent?: number | null;
+}
+
 interface InstalledVersionMap {
   versions: Record<string, string>;
 }
@@ -102,6 +116,8 @@ interface InstalledVersionMap {
 export default function App() {
   const [paths, setPaths] = useState<PortablePaths>(initialPaths);
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
+  const [resourceSummaries, setResourceSummaries] = useState<Record<string, EmulatorResourceSummary>>({});
+  const [resourceProgressByKey, setResourceProgressByKey] = useState<Record<string, EmulatorResourceProgressPayload>>({});
   const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
   const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
   const [manualImportPlatforms, setManualImportPlatforms] = useState<ManualImportPlatform[]>([]);
@@ -118,6 +134,11 @@ export default function App() {
     romPath: string;
     title: string;
     fileName: string;
+  } | null>(null);
+  const [pendingSaveConflict, setPendingSaveConflict] = useState<{
+    romPath: string;
+    localOnly: boolean;
+    conflict: SaveConflictStatus;
   } | null>(null);
   const [deletingRomPath, setDeletingRomPath] = useState<string | null>(null);
   const [pendingUninstallEmulator, setPendingUninstallEmulator] = useState<EmulatorEntry | null>(null);
@@ -236,6 +257,18 @@ export default function App() {
     });
   };
 
+  const refreshEmulatorResourceStatuses = async (root: string) => {
+    const summaries = await invoke<EmulatorResourceSummary[]>(
+      "get_emulator_resource_statuses_command",
+      { root }
+    );
+    const byId = Object.fromEntries(
+      summaries.map((summary) => [summary.emulatorId, summary])
+    );
+    setResourceSummaries(byId);
+    return byId;
+  };
+
   useEffect(() => {
     const bootstrap = async () => {
       try {
@@ -309,6 +342,7 @@ export default function App() {
         setEmulators(nextEmulators);
 
         await refreshInstalledVersions(portablePaths.root, builtin, mergedInstalledIds);
+        await refreshEmulatorResourceStatuses(portablePaths.root);
 
         const firstInstalled = nextEmulators.find((entry) => entry.status === "installed");
         setSelectedEmulatorId(firstInstalled?.id ?? null);
@@ -333,6 +367,7 @@ export default function App() {
     let unlistenRomComplete: UnlistenFn | null = null;
     let unlistenInstallProgress: UnlistenFn | null = null;
     let unlistenInstallComplete: UnlistenFn | null = null;
+    let unlistenResourceProgress: UnlistenFn | null = null;
     let unlistenDebugEntry: UnlistenFn | null = null;
 
     const setupListeners = async () => {
@@ -419,6 +454,24 @@ export default function App() {
         }
       );
 
+      unlistenResourceProgress = await listen<EmulatorResourceProgressPayload>(
+        "emulator-resource-progress",
+        (event) => {
+          const payload = event.payload;
+          const key = resourceProgressKey(payload.emulatorId, payload.resourceId);
+          setResourceProgressByKey((previous) => ({
+            ...previous,
+            [key]: payload
+          }));
+          void debugLog("info", "emulator-resource", payload.message, {
+            emulatorId: payload.emulatorId,
+            resourceId: payload.resourceId,
+            stage: payload.stage,
+            percent: payload.percent ?? null
+          });
+        }
+      );
+
       unlistenDebugEntry = await listen<DebugLogEntry>("debug-log-entry", (event) => {
         if (event.payload.source === "backend") {
           recordDebugLogEntry(event.payload);
@@ -440,6 +493,9 @@ export default function App() {
       }
       if (unlistenInstallComplete) {
         unlistenInstallComplete();
+      }
+      if (unlistenResourceProgress) {
+        unlistenResourceProgress();
       }
       if (unlistenDebugEntry) {
         unlistenDebugEntry();
@@ -692,6 +748,20 @@ export default function App() {
     setPendingDeleteRom(null);
   };
 
+  const closeSaveConflictModal = () => {
+    setPendingSaveConflict(null);
+  };
+
+  const confirmSaveConflictResolution = (resolution: SaveConflictResolution) => {
+    if (!pendingSaveConflict) {
+      return;
+    }
+
+    const { romPath, localOnly } = pendingSaveConflict;
+    setPendingSaveConflict(null);
+    void launchSpecificRom(romPath, localOnly, resolution);
+  };
+
   const confirmDeleteLocalRom = async () => {
     if (!pendingDeleteRom) {
       return;
@@ -785,6 +855,7 @@ export default function App() {
       }
 
       await refreshInstalledVersions(paths.root);
+      await refreshEmulatorResourceStatuses(paths.root);
       setPendingUninstallEmulator(null);
       notify(
         "success",
@@ -902,6 +973,7 @@ export default function App() {
       }
 
       await refreshInstalledVersions(paths.root);
+      await refreshEmulatorResourceStatuses(paths.root);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       notify("error", message);
@@ -920,6 +992,103 @@ export default function App() {
           return next;
         });
       }, 500);
+    }
+  };
+
+  const installResourcesForEmulator = async (
+    id: string,
+    sessionOverride: RommSession | null = rommSession,
+    knownSummary?: EmulatorResourceSummary
+  ) => {
+    const summary = knownSummary ?? resourceSummaries[id];
+    if (!summary || summary.requirements.length === 0 || summary.ready) {
+      return true;
+    }
+
+    const displayName = emulators.find((emu) => emu.id === id)?.name ?? id;
+
+    if (!sessionOverride) {
+      const message = formatResourceBlockMessage(summary);
+      notify("error", `${message} Connect to RomM to install missing resources automatically.`);
+      return false;
+    }
+
+    try {
+      notify("info", `Installing required resources for ${displayName}...`);
+      void debugLog("info", "emulator-resource", `Installing resources for ${id}`, {
+        missing: summary.statuses
+          .filter((status) => status.required && status.state !== "valid")
+          .map((status) => status.id)
+      });
+
+      const result = await invoke<ResourceInstallResult>("install_emulator_resources_command", {
+        root: paths.root,
+        emulatorId: id,
+        rommSession: {
+          baseUrl: sessionOverride.baseUrl,
+          token: sessionOverride.token
+        }
+      });
+
+      setResourceSummaries((previous) => ({
+        ...previous,
+        [result.summary.emulatorId]: result.summary
+      }));
+      await refreshEmulatorResourceStatuses(paths.root);
+
+      notify(
+        result.summary.ready ? "success" : "warning",
+        result.summary.ready
+          ? `${displayName} resources are ready.`
+          : formatResourceBlockMessage(result.summary)
+      );
+      void debugLog("success", "emulator-resource", `Resource installation completed for ${id}`, result);
+
+      return result.summary.ready;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "emulator-resource", `Resource installation failed for ${id}`, message);
+      await refreshEmulatorResourceStatuses(paths.root);
+      return false;
+    } finally {
+      window.setTimeout(() => {
+        setResourceProgressByKey((previous) =>
+          Object.fromEntries(
+            Object.entries(previous).filter(
+              ([key]) => !key.startsWith(`${id}:`)
+            )
+          )
+        );
+      }, 700);
+    }
+  };
+
+  const ensureResourcesForEmulator = async (
+    id: string,
+    sessionOverride: RommSession | null = rommSession
+  ) => {
+    const summaries =
+      Object.keys(resourceSummaries).length > 0
+        ? resourceSummaries
+        : await refreshEmulatorResourceStatuses(paths.root);
+    const summary = summaries[id];
+
+    if (!summary || summary.requirements.length === 0 || summary.ready) {
+      return true;
+    }
+
+    return installResourcesForEmulator(id, sessionOverride, summary);
+  };
+
+  const installMissingResourcesForInstalledEmulators = async (session: RommSession) => {
+    const summaries = await refreshEmulatorResourceStatuses(paths.root);
+
+    for (const emu of emulators.filter((entry) => entry.status === "installed")) {
+      const summary = summaries[emu.id];
+      if (summary && summary.requirements.length > 0 && !summary.ready) {
+        await installResourcesForEmulator(emu.id, session, summary);
+      }
     }
   };
 
@@ -972,6 +1141,7 @@ export default function App() {
       message: `Connected to RomM as ${username}.`
     });
     notify("success", `Connected to RomM as ${username}.`);
+    await installMissingResourcesForInstalledEmulators(session);
   };
 
   const handleDownloadGame = async (game: RommGame) => {
@@ -1077,7 +1247,11 @@ export default function App() {
     }
   };
 
-  const launchSpecificRom = async (romPath: string, localOnly = false) => {
+  const launchSpecificRom = async (
+    romPath: string,
+    localOnly = false,
+    saveConflictResolution?: SaveConflictResolution
+  ) => {
     if (runningRomPathsRef.current[romPath]) {
       void debugLog("debug", "game-launch", "Ignored duplicate ROM launch while already running", {
         romPath
@@ -1095,6 +1269,41 @@ export default function App() {
     let launched = false;
 
     try {
+      const emulatorId = await invoke<string>("resolve_emulator_id_for_rom_command", {
+        root: paths.root,
+        romPath
+      });
+      const resourcesReady = await ensureResourcesForEmulator(
+        emulatorId,
+        rommSession
+      );
+      if (!resourcesReady) {
+        return;
+      }
+
+      if (!localOnly && rommSession && !saveConflictResolution) {
+        const conflict = await invoke<SaveConflictStatus | null>(
+          "get_save_conflict_status_command",
+          {
+            root: paths.root,
+            romPath,
+            rommSession: {
+              baseUrl: rommSession.baseUrl,
+              token: rommSession.token
+            } satisfies RommLaunchSession
+          }
+        );
+
+        if (conflict) {
+          setPendingSaveConflict({
+            romPath,
+            localOnly,
+            conflict
+          });
+          return;
+        }
+      }
+
       void debugLog("info", "game-launch", "Launching ROM", { romPath, localOnly });
       const result = await invoke<GameLaunchResult>("launch_game_auto_command", {
         root: paths.root,
@@ -1102,7 +1311,8 @@ export default function App() {
         rommSession: !localOnly && rommSession
           ? ({
               baseUrl: rommSession.baseUrl,
-              token: rommSession.token
+              token: rommSession.token,
+              saveConflictResolution
             } satisfies RommLaunchSession)
           : null
       });
@@ -1118,6 +1328,16 @@ export default function App() {
       await refreshLocalSaves(paths.root);
       await refreshInstalledVersions(paths.root);
     } catch (reason) {
+      const conflict = parseSaveConflictError(reason);
+      if (conflict) {
+        setPendingSaveConflict({
+          romPath,
+          localOnly,
+          conflict
+        });
+        return;
+      }
+
       const message = reason instanceof Error ? reason.message : String(reason);
       notify("error", message);
       void debugLog("error", "game-launch", "ROM launch failed", {
@@ -1131,10 +1351,15 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="center-screen">
-        <div className="panel loading-panel">
-          <h2 className="panel-title">Initialization</h2>
-          <p className="panel-subtitle">Preparing portable environment</p>
+      <div className="window-shell">
+        <WindowTitlebar />
+        <div className="window-content">
+          <div className="center-screen">
+            <div className="panel loading-panel">
+              <h2 className="panel-title">Initialization</h2>
+              <p className="panel-subtitle">Preparing portable environment</p>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1142,103 +1367,171 @@ export default function App() {
 
   if (error) {
     return (
-      <div className="center-screen">
-        <div className="panel loading-panel">
-          <h2 className="panel-title">Error</h2>
-          <p className="panel-subtitle">Failed to initialize EmuManager</p>
-          <p>{error}</p>
+      <div className="window-shell">
+        <WindowTitlebar />
+        <div className="window-content">
+          <div className="center-screen">
+            <div className="panel loading-panel">
+              <h2 className="panel-title">Error</h2>
+              <p className="panel-subtitle">Failed to initialize EmuManager</p>
+              <p>{error}</p>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div>
-          <h2 className="sidebar-title">EmuManager</h2>
-          <p className="muted">{installedCount} installed</p>
-        </div>
-
-        <button className="primary-button" onClick={() => setShowPicker(true)}>
-          Emulators
-        </button>
-
-        <nav className="emulator-list">
-          {emulators
-            .filter((emu) => emu.status === "installed")
-            .map((emu) => {
-              const isSelected = selectedEmulatorId === emu.id;
-              const isLaunching = launchingId === emu.id;
-              const version = emu.version ?? emu.catalogVersion ?? "Unknown";
-
-              return (
-                <div
-                  key={emu.id}
-                  className={`emulator-menu-item ${isSelected ? "emulator-menu-item-active" : ""}`}
-                >
-                  <button
-                    className="emulator-select-button"
-                    type="button"
-                    onClick={() => setSelectedEmulatorId(emu.id)}
-                  >
-                    <span className="emulator-menu-name">{emu.name}</span>
-                    <span className="emulator-menu-platform">{emu.platformLabel}</span>
-                    <span className="emulator-menu-version">Version {version}</span>
-                  </button>
-                  <button
-                    className="emulator-menu-launch-button"
-                    type="button"
-                    disabled={isLaunching}
-                    title={`Launch ${emu.name}`}
-                    aria-label={`Launch ${emu.name}`}
-                    onClick={() => void launchSelectedEmulator(emu.id)}
-                  >
-                    {isLaunching ? (
-                      <span className="button-spinner" aria-hidden="true" />
-                    ) : (
-                      <span className="play-icon" aria-hidden="true" />
-                    )}
-                  </button>
-                </div>
-              );
-            })}
-
-          {installedCount === 0 ? (
-            <div className="empty-state">
-              <p>No emulator installed</p>
+    <div className="window-shell">
+      <WindowTitlebar />
+      <div className="window-content">
+        <div className="app-shell">
+          <aside className="sidebar">
+            <div>
+              <h2 className="sidebar-title">EmuManager</h2>
+              <p className="muted">{installedCount} installed</p>
             </div>
-          ) : null}
-        </nav>
-      </aside>
 
-      <main className="content">
-        <RommConnectionCard
-          defaultBaseUrl={config.romm?.baseUrl}
-          defaultUsername={config.romm?.username}
-          onConnected={handleRommConnected}
-        />
+            <button className="primary-button" onClick={() => setShowPicker(true)}>
+              Emulators
+            </button>
 
-        <ControllerMappingPanel
-          selectedEmulator={selectedEmulator}
-          profiles={controllerProfiles}
-          onSaveProfile={saveControllerProfile}
-        />
+            <nav className="emulator-list">
+              {emulators
+                .filter((emu) => emu.status === "installed")
+                .map((emu) => {
+                  const isSelected = selectedEmulatorId === emu.id;
+                  const isLaunching = launchingId === emu.id;
+                  const version = emu.version ?? emu.catalogVersion ?? "Unknown";
+                  const resourceSummary = resourceSummaries[emu.id];
 
-        <LibraryPanel
-          session={rommSession}
-          localRoms={localRoms}
-          saveSyncStatuses={saveSyncStatuses}
-          onDownloadGame={handleDownloadGame}
-          onLaunchLocalRom={launchSpecificRom}
-          onRequestDeleteLocalRom={requestDeleteLocalRom}
-          downloadProgressById={downloadProgressById}
-          runningRomPaths={runningRomPaths}
-          notice={libraryNotice}
-          manualImportDragActive={manualImportDragActive}
-          pendingManualImportFileName={pendingManualImport?.fileName ?? null}
-        />
-      </main>
+                  return (
+                    <div
+                      key={emu.id}
+                      className={`emulator-menu-item ${isSelected ? "emulator-menu-item-active" : ""}`}
+                    >
+                      <button
+                        className="emulator-select-button"
+                        type="button"
+                        onClick={() => setSelectedEmulatorId(emu.id)}
+                      >
+                        <span className="emulator-menu-name-row">
+                          <span className="emulator-menu-name">{emu.name}</span>
+                          <ResourceIndicators summary={resourceSummary} />
+                        </span>
+                        <span className="emulator-menu-platform">{emu.platformLabel}</span>
+                        <span className="emulator-menu-version">Version {version}</span>
+                      </button>
+                      <button
+                        className="emulator-menu-launch-button"
+                        type="button"
+                        disabled={isLaunching}
+                        title={`Launch ${emu.name}`}
+                        aria-label={`Launch ${emu.name}`}
+                        onClick={() => void launchSelectedEmulator(emu.id)}
+                      >
+                        {isLaunching ? (
+                          <span className="button-spinner" aria-hidden="true" />
+                        ) : (
+                          <span className="play-icon" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+
+              {installedCount === 0 ? (
+                <div className="empty-state">
+                  <p>No emulator installed</p>
+                </div>
+              ) : null}
+            </nav>
+          </aside>
+
+          <main className="content">
+            <RommConnectionCard
+              defaultBaseUrl={config.romm?.baseUrl}
+              defaultUsername={config.romm?.username}
+              onConnected={handleRommConnected}
+            />
+
+            <ControllerMappingPanel
+              selectedEmulator={selectedEmulator}
+              profiles={controllerProfiles}
+              onSaveProfile={saveControllerProfile}
+            />
+
+            <LibraryPanel
+              session={rommSession}
+              localRoms={localRoms}
+              saveSyncStatuses={saveSyncStatuses}
+              onDownloadGame={handleDownloadGame}
+              onLaunchLocalRom={launchSpecificRom}
+              onRequestDeleteLocalRom={requestDeleteLocalRom}
+              downloadProgressById={downloadProgressById}
+              runningRomPaths={runningRomPaths}
+              notice={libraryNotice}
+              manualImportDragActive={manualImportDragActive}
+              pendingManualImportFileName={pendingManualImport?.fileName ?? null}
+            />
+          </main>
+        </div>
+      </div>
+
+      {pendingSaveConflict ? (
+        <div className="modal-backdrop" onClick={closeSaveConflictModal}>
+          <div className="modal confirmation-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Save conflict</h2>
+                <p className="panel-subtitle">{getPathFileName(pendingSaveConflict.romPath)}</p>
+              </div>
+              <button className="ghost-button" onClick={closeSaveConflictModal}>
+                Close
+              </button>
+            </div>
+
+            <p className="confirmation-copy">
+              Local and RomM saves both changed since the last sync. Choose which save should be
+              used for this launch.
+            </p>
+
+            <div className="save-conflict-compare">
+              <div className="save-conflict-option">
+                <strong>Local save</strong>
+                <span>{formatConflictTimestamp(pendingSaveConflict.conflict.localSaveUpdatedAtMs)}</span>
+                <small>Kept on this device; uploaded back to RomM after play.</small>
+              </div>
+              <div className="save-conflict-option">
+                <strong>RomM save</strong>
+                <span>
+                  {formatConflictIsoTimestamp(pendingSaveConflict.conflict.remoteSaveUpdatedAt)}
+                </span>
+                <small>{pendingSaveConflict.conflict.remoteSaveFileName ?? "Remote save archive"}</small>
+              </div>
+            </div>
+
+            <div className="confirmation-actions save-conflict-actions">
+              <button className="ghost-button" onClick={closeSaveConflictModal}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => confirmSaveConflictResolution("useLocal")}
+              >
+                Use local save
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => confirmSaveConflictResolution("useRomm")}
+              >
+                Use RomM save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showPicker ? (
         <div className="modal-backdrop" onClick={() => setShowPicker(false)}>
@@ -1261,12 +1554,33 @@ export default function App() {
                   ? normalizeDownloadPercent(installPercent)
                   : 0;
                 const isInstalled = emu.status === "installed";
+                const resourceSummary = resourceSummaries[emu.id];
+                const resourceProgress = getActiveResourceProgress(
+                  resourceProgressByKey,
+                  emu.id
+                );
 
                 return (
                   <div key={emu.id} className="picker-item">
                     <div>
-                      <strong>{emu.name}</strong>
+                      <div className="picker-title-row">
+                        <strong>{emu.name}</strong>
+                        <ResourceIndicators summary={resourceSummary} />
+                      </div>
                       <p>{emu.platformLabel}</p>
+                      {resourceSummary?.requirements.length ? (
+                        <small className="resource-summary-line">
+                          {formatResourceSummaryLine(resourceSummary)}
+                        </small>
+                      ) : null}
+                      {resourceProgress ? (
+                        <small className="resource-progress-line">
+                          {resourceProgress.message}
+                          {typeof resourceProgress.percent === "number"
+                            ? ` ${Math.round(normalizeDownloadPercent(resourceProgress.percent))}%`
+                            : ""}
+                        </small>
+                      ) : null}
                     </div>
                     <button
                       className="primary-button picker-action-button"
@@ -1491,6 +1805,127 @@ function formatDuplicateImportMessage(rawMessage: string): string {
   return `These ROMs already exist:\n${conflicts.join("\n")}\nOverwrite them?`;
 }
 
+function parseSaveConflictError(reason: unknown): SaveConflictStatus | null {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const prefix = "SAVE_CONFLICT:";
+  const start = message.indexOf(prefix);
+
+  if (start === -1) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(message.slice(start + prefix.length)) as SaveConflictStatus;
+  } catch {
+    return null;
+  }
+}
+
+function formatConflictTimestamp(value: number): string {
+  return new Date(value).toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function formatConflictIsoTimestamp(value?: string | null): string {
+  if (!value) {
+    return "Unknown";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function ResourceIndicators({ summary }: { summary?: EmulatorResourceSummary }) {
+  if (!summary?.requirements.length) {
+    return null;
+  }
+
+  return (
+    <span className="resource-indicators" aria-label={formatResourceSummaryLine(summary)}>
+      {summary.statuses.map((status) => (
+        <span
+          key={status.id}
+          className={`resource-dot resource-dot-${status.state}`}
+          title={`${status.label}: ${status.message}`}
+          aria-label={`${status.label}: ${status.state}`}
+        >
+          {resourceDotLabel(status.kind)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function resourceDotLabel(kind: string): string {
+  switch (kind) {
+    case "bios":
+      return "B";
+    case "firmware":
+      return "F";
+    case "keys":
+      return "K";
+    default:
+      return "?";
+  }
+}
+
+function formatResourceSummaryLine(summary: EmulatorResourceSummary): string {
+  if (!summary.requirements.length) {
+    return "No required resources";
+  }
+
+  const problemStatuses = summary.statuses.filter(
+    (status) => status.required && status.state !== "valid"
+  );
+
+  if (!problemStatuses.length) {
+    return `Resources ready: ${summary.statuses.map((status) => status.label).join(", ")}`;
+  }
+
+  return `Resources missing: ${problemStatuses
+    .map((status) => status.label)
+    .join(", ")}`;
+}
+
+function formatResourceBlockMessage(summary: EmulatorResourceSummary): string {
+  const problemStatuses = summary.statuses.filter(
+    (status) => status.required && status.state !== "valid"
+  );
+
+  if (!problemStatuses.length) {
+    return `${summary.emulatorName} resources are ready.`;
+  }
+
+  return `${summary.emulatorName} cannot launch yet: ${problemStatuses
+    .map((status) => `${status.label} ${status.state}`)
+    .join(", ")}.`;
+}
+
+function resourceProgressKey(emulatorId: string, resourceId: string): string {
+  return `${emulatorId}:${resourceId}`;
+}
+
+function getActiveResourceProgress(
+  progressByKey: Record<string, EmulatorResourceProgressPayload>,
+  emulatorId: string
+): EmulatorResourceProgressPayload | null {
+  return (
+    Object.entries(progressByKey)
+      .filter(([key]) => key.startsWith(`${emulatorId}:`))
+      .map(([, value]) => value)
+      .find((value) => value.stage !== "complete") ?? null
+  );
+}
+
 async function openDebugWindow(): Promise<void> {
   try {
     const existing = await WebviewWindow.getByLabel(DEBUG_WINDOW_LABEL);
@@ -1510,6 +1945,7 @@ async function openDebugWindow(): Promise<void> {
       minWidth: 760,
       minHeight: 440,
       resizable: true,
+      decorations: false,
       focus: true
     });
 
