@@ -1,6 +1,6 @@
 [package]
 name = "emumanager"
-version = "0.1.0"
+version = "0.4.0-Alpha"
 description = "EmuManager"
 authors = ["Sahhperlipopette"]
 license = "Proprietary"
@@ -10,6 +10,7 @@ edition = "2021"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
+base64 = "0.22"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +19,7 @@ sevenz-rust = "0.6"
 tauri = { version = "2.0.0", features = [] }
 tokio = { version = "1", features = ["fs", "io-util"] }
 toml_edit = "0.25"
+unrar = "0.5.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [features]

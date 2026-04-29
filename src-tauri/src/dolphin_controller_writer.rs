@@ -249,6 +249,22 @@ fn build_dolphin_wiimote_profile(
     section: &str,
     device: &str,
 ) -> String {
+    let wiimote_shake = find_binding_any(
+        profile,
+        &["Secouer Wiimote", "Secouer X", "Secouer Y", "Secouer Z"],
+        "Button A",
+    );
+    let nunchuk_shake = find_binding_any(
+        profile,
+        &[
+            "Secouer Nunchuk",
+            "Nunchuk Secouer X",
+            "Nunchuk Secouer Y",
+            "Nunchuk Secouer Z",
+        ],
+        "Button B",
+    );
+
     let mut lines = vec![
         section.to_string(),
         "Source = 1".to_string(),
@@ -320,18 +336,9 @@ fn build_dolphin_wiimote_profile(
             "IMUIR/Recenter = {}",
             find_binding(profile, "IR Recentrer", "Thumb R")
         ),
-        format!(
-            "Shake/X = {}",
-            find_binding(profile, "Secouer X", "Button A")
-        ),
-        format!(
-            "Shake/Y = {}",
-            find_binding(profile, "Secouer Y", "Button B")
-        ),
-        format!(
-            "Shake/Z = {}",
-            find_binding(profile, "Secouer Z", "Button X")
-        ),
+        format!("Shake/X = {}", wiimote_shake),
+        format!("Shake/Y = {}", wiimote_shake),
+        format!("Shake/Z = {}", wiimote_shake),
     ];
 
     match kind {
@@ -362,6 +369,9 @@ fn build_dolphin_wiimote_profile(
                     "Nunchuk/Stick/Right = {}",
                     find_binding(profile, "Nunchuk Droite", "Left X+")
                 ),
+                format!("Nunchuk/Shake/X = {}", nunchuk_shake),
+                format!("Nunchuk/Shake/Y = {}", nunchuk_shake),
+                format!("Nunchuk/Shake/Z = {}", nunchuk_shake),
                 "Nunchuk/Stick/Calibration = 100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42".to_string(),
             ]);
         }

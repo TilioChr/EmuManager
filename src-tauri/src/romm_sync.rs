@@ -31,6 +31,29 @@ const MAX_REMOTE_SAVES: usize = 5;
 pub struct RommLaunchSession {
     pub base_url: String,
     pub token: String,
+    #[serde(default)]
+    pub save_conflict_resolution: Option<SaveConflictResolution>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SaveConflictResolution {
+    UseLocal,
+    UseRomm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveConflictStatus {
+    pub rom_path: String,
+    pub romm_id: String,
+    pub emulator_id: String,
+    pub slot_name: String,
+    pub local_save_updated_at_ms: u64,
+    pub last_synced_local_save_at_ms: Option<u64>,
+    pub remote_save_updated_at: Option<String>,
+    pub last_known_remote_save_at: Option<String>,
+    pub remote_save_file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +204,55 @@ pub fn get_save_sync_statuses(
             }
         })
         .collect())
+}
+
+pub fn get_save_conflict_status(
+    paths: &PortablePaths,
+    session: &RommLaunchSession,
+    rom_path: &str,
+) -> Result<Option<SaveConflictStatus>, String> {
+    let rom = Path::new(rom_path);
+    let emulator_id = crate::platform_router::resolve_emulator_id_for_rom_path(paths, rom_path)?;
+    let Some((remote_emulator_id, slot_name)) = emulator_save_scope(&emulator_id) else {
+        return Ok(None);
+    };
+
+    let mut mapping = load_rom_index(paths)?
+        .entries
+        .into_iter()
+        .find(|entry| Path::new(&entry.rom_path) == rom);
+
+    if mapping.is_none() {
+        mapping = resolve_mapping_from_remote(paths, session, rom)?;
+    }
+
+    let Some(mapping) = mapping else {
+        return Ok(None);
+    };
+
+    let local_timestamp = latest_local_save_timestamp(paths, &emulator_id, rom)?;
+    let Some(local_timestamp) = local_timestamp else {
+        return Ok(None);
+    };
+
+    let latest_save = fetch_latest_emumanager_save(
+        paths,
+        session,
+        &mapping,
+        remote_emulator_id,
+        slot_name,
+    )?;
+    let Some(save) = latest_save else {
+        return Ok(None);
+    };
+
+    Ok(build_save_conflict_status(
+        &mapping,
+        &emulator_id,
+        slot_name,
+        local_timestamp,
+        &save,
+    ))
 }
 
 pub fn launch_dolphin(
@@ -1030,38 +1102,20 @@ fn maybe_restore_latest_remote_save(
 
     let local_timestamp = latest_dolphin_save_timestamp_ms(paths, rom_path)?;
 
-    if let (Some(current_local), Some(last_synced_local)) =
-        (local_timestamp, mapping.last_synced_local_save_at_ms)
-    {
-        if current_local > last_synced_local {
-            log_sync(
-                paths,
-                &format!(
-                    "skipping remote restore because local save is newer than last synced local copy current={} last_synced={}",
-                    current_local, last_synced_local
-                ),
-            );
-            return Ok(());
-        }
-    }
-
-    let latest_save = fetch_emumanager_saves(
+    let latest_save = fetch_latest_emumanager_save(
         paths,
         session,
-        &mapping.romm_id,
+        mapping,
         "dolphin",
         DOLPHIN_SLOT_NAME,
-    )?
-        .into_iter()
-        .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    )?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote save bundle found");
         return Ok(());
     };
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
-        log_sync(paths, "remote save timestamp matches last known sync, keeping local profile");
+    if !should_restore_remote_save(paths, session, mapping, "dolphin", DOLPHIN_SLOT_NAME, local_timestamp, &save)? {
         return Ok(());
     }
 
@@ -1210,38 +1264,20 @@ fn maybe_restore_latest_melonds_save(
 
     let local_timestamp = latest_melonds_save_timestamp_ms(rom_path)?;
 
-    if let (Some(current_local), Some(last_synced_local)) =
-        (local_timestamp, mapping.last_synced_local_save_at_ms)
-    {
-        if current_local > last_synced_local {
-            log_sync(
-                paths,
-                &format!(
-                    "skipping melonDS remote restore because local save is newer than last synced local copy current={} last_synced={}",
-                    current_local, last_synced_local
-                ),
-            );
-            return Ok(());
-        }
-    }
-
-    let latest_save = fetch_emumanager_saves(
+    let latest_save = fetch_latest_emumanager_save(
         paths,
         session,
-        &mapping.romm_id,
+        mapping,
         "melonds",
         MELONDS_SLOT_NAME,
-    )?
-    .into_iter()
-    .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    )?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote melonDS save bundle found");
         return Ok(());
     };
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
-        log_sync(paths, "melonDS remote save timestamp matches last known sync, keeping local files");
+    if !should_restore_remote_save(paths, session, mapping, "melonds", MELONDS_SLOT_NAME, local_timestamp, &save)? {
         return Ok(());
     }
 
@@ -1394,38 +1430,20 @@ fn maybe_restore_latest_azahar_save(
 
     let local_timestamp = latest_azahar_save_timestamp_ms(paths, rom_path)?;
 
-    if let (Some(current_local), Some(last_synced_local)) =
-        (local_timestamp, mapping.last_synced_local_save_at_ms)
-    {
-        if current_local > last_synced_local {
-            log_sync(
-                paths,
-                &format!(
-                    "skipping Azahar remote restore because local save is newer than last synced local copy current={} last_synced={}",
-                    current_local, last_synced_local
-                ),
-            );
-            return Ok(());
-        }
-    }
-
-    let latest_save = fetch_emumanager_saves(
+    let latest_save = fetch_latest_emumanager_save(
         paths,
         session,
-        &mapping.romm_id,
+        mapping,
         "azahar",
         AZAHAR_SLOT_NAME,
-    )?
-    .into_iter()
-    .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    )?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote Azahar save bundle found");
         return Ok(());
     };
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
-        log_sync(paths, "Azahar remote save timestamp matches last known sync, keeping local profile");
+    if !should_restore_remote_save(paths, session, mapping, "azahar", AZAHAR_SLOT_NAME, local_timestamp, &save)? {
         return Ok(());
     }
 
@@ -1577,38 +1595,20 @@ fn maybe_restore_latest_eden_save(
 
     let local_timestamp = latest_eden_save_timestamp_ms(paths, rom_path)?;
 
-    if let (Some(current_local), Some(last_synced_local)) =
-        (local_timestamp, mapping.last_synced_local_save_at_ms)
-    {
-        if current_local > last_synced_local {
-            log_sync(
-                paths,
-                &format!(
-                    "skipping Eden remote restore because local save is newer than last synced local copy current={} last_synced={}",
-                    current_local, last_synced_local
-                ),
-            );
-            return Ok(());
-        }
-    }
-
-    let latest_save = fetch_emumanager_saves(
+    let latest_save = fetch_latest_emumanager_save(
         paths,
         session,
-        &mapping.romm_id,
+        mapping,
         "eden",
         EDEN_SLOT_NAME,
-    )?
-    .into_iter()
-    .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    )?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote Eden save bundle found");
         return Ok(());
     };
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
-        log_sync(paths, "Eden remote save timestamp matches last known sync, keeping local profile");
+    if !should_restore_remote_save(paths, session, mapping, "eden", EDEN_SLOT_NAME, local_timestamp, &save)? {
         return Ok(());
     }
 
@@ -1765,38 +1765,20 @@ fn maybe_restore_latest_pcsx2_save(
 
     let local_timestamp = latest_pcsx2_save_timestamp_ms(paths, rom_path)?;
 
-    if let (Some(current_local), Some(last_synced_local)) =
-        (local_timestamp, mapping.last_synced_local_save_at_ms)
-    {
-        if current_local > last_synced_local {
-            log_sync(
-                paths,
-                &format!(
-                    "skipping PCSX2 remote restore because local save is newer than last synced local copy current={} last_synced={}",
-                    current_local, last_synced_local
-                ),
-            );
-            return Ok(());
-        }
-    }
-
-    let latest_save = fetch_emumanager_saves(
+    let latest_save = fetch_latest_emumanager_save(
         paths,
         session,
-        &mapping.romm_id,
+        mapping,
         "pcsx2",
         PCSX2_SLOT_NAME,
-    )?
-    .into_iter()
-    .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    )?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote PCSX2 save bundle found");
         return Ok(());
     };
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
-        log_sync(paths, "PCSX2 remote save timestamp matches last known sync, keeping local profile");
+    if !should_restore_remote_save(paths, session, mapping, "pcsx2", PCSX2_SLOT_NAME, local_timestamp, &save)? {
         return Ok(());
     }
 
@@ -1940,6 +1922,161 @@ fn upload_pcsx2_save_bundle(
 
     cleanup_old_remote_saves(paths, session, &mapping.romm_id, "pcsx2", PCSX2_SLOT_NAME)?;
     Ok(())
+}
+
+fn fetch_latest_emumanager_save(
+    paths: &PortablePaths,
+    session: &RommLaunchSession,
+    mapping: &RommRomMapping,
+    emulator_id: &str,
+    slot_name: &str,
+) -> Result<Option<RommSaveEntry>, String> {
+    Ok(fetch_emumanager_saves(paths, session, &mapping.romm_id, emulator_id, slot_name)?
+        .into_iter()
+        .max_by(|left, right| left.updated_at.cmp(&right.updated_at)))
+}
+
+fn should_restore_remote_save(
+    paths: &PortablePaths,
+    session: &RommLaunchSession,
+    mapping: &RommRomMapping,
+    emulator_id: &str,
+    slot_name: &str,
+    local_timestamp: Option<u64>,
+    save: &RommSaveEntry,
+) -> Result<bool, String> {
+    if let Some(local_timestamp) = local_timestamp {
+        if let Some(conflict) =
+            build_save_conflict_status(mapping, emulator_id, slot_name, local_timestamp, save)
+        {
+            return match session.save_conflict_resolution {
+                Some(SaveConflictResolution::UseLocal) => {
+                    log_sync(
+                        paths,
+                        &format!(
+                            "save conflict resolved with local save rom_path={} remote={:?}",
+                            mapping.rom_path, save.updated_at
+                        ),
+                    );
+                    Ok(false)
+                }
+                Some(SaveConflictResolution::UseRomm) => {
+                    log_sync(
+                        paths,
+                        &format!(
+                            "save conflict resolved with RomM save rom_path={} remote={:?}",
+                            mapping.rom_path, save.updated_at
+                        ),
+                    );
+                    Ok(true)
+                }
+                None => Err(format!(
+                    "SAVE_CONFLICT:{}",
+                    serde_json::to_string(&conflict)
+                        .unwrap_or_else(|_| "Save conflict detected.".to_string())
+                )),
+            };
+        }
+
+        if local_save_changed_since_sync(Some(local_timestamp), mapping) {
+            log_sync(
+                paths,
+                &format!(
+                    "skipping {} remote restore because local save is newer than last synced local copy current={} last_synced={:?}",
+                    emulator_id, local_timestamp, mapping.last_synced_local_save_at_ms
+                ),
+            );
+            return Ok(false);
+        }
+    }
+
+    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
+        log_sync(
+            paths,
+            &format!(
+                "{} remote save timestamp matches last known sync, keeping local save",
+                emulator_id
+            ),
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+fn build_save_conflict_status(
+    mapping: &RommRomMapping,
+    emulator_id: &str,
+    slot_name: &str,
+    local_timestamp: u64,
+    save: &RommSaveEntry,
+) -> Option<SaveConflictStatus> {
+    if !local_save_changed_since_sync(Some(local_timestamp), mapping)
+        || !remote_save_changed_since_sync(save, mapping)
+    {
+        return None;
+    }
+
+    Some(SaveConflictStatus {
+        rom_path: mapping.rom_path.clone(),
+        romm_id: mapping.romm_id.clone(),
+        emulator_id: emulator_id.to_string(),
+        slot_name: slot_name.to_string(),
+        local_save_updated_at_ms: local_timestamp,
+        last_synced_local_save_at_ms: mapping.last_synced_local_save_at_ms,
+        remote_save_updated_at: save.updated_at.clone(),
+        last_known_remote_save_at: mapping.last_remote_save_at.clone(),
+        remote_save_file_name: save.file_name.clone(),
+    })
+}
+
+fn local_save_changed_since_sync(
+    local_timestamp: Option<u64>,
+    mapping: &RommRomMapping,
+) -> bool {
+    let Some(local_timestamp) = local_timestamp else {
+        return false;
+    };
+
+    mapping
+        .last_synced_local_save_at_ms
+        .map(|last_synced| local_timestamp > last_synced)
+        .unwrap_or(true)
+}
+
+fn remote_save_changed_since_sync(save: &RommSaveEntry, mapping: &RommRomMapping) -> bool {
+    match (&mapping.last_remote_save_at, &save.updated_at) {
+        (Some(known), Some(remote)) => known != remote,
+        (None, Some(_)) => true,
+        (Some(_), None) => true,
+        (None, None) => false,
+    }
+}
+
+fn latest_local_save_timestamp(
+    paths: &PortablePaths,
+    emulator_id: &str,
+    rom_path: &Path,
+) -> Result<Option<u64>, String> {
+    match emulator_id {
+        "dolphin" => latest_dolphin_save_timestamp_ms(paths, rom_path),
+        "melonds" => latest_melonds_save_timestamp_ms(rom_path),
+        "azahar" => latest_azahar_save_timestamp_ms(paths, rom_path),
+        "eden" => latest_eden_save_timestamp_ms(paths, rom_path),
+        "pcsx2" => latest_pcsx2_save_timestamp_ms(paths, rom_path),
+        _ => Ok(None),
+    }
+}
+
+fn emulator_save_scope(emulator_id: &str) -> Option<(&'static str, &'static str)> {
+    match emulator_id {
+        "dolphin" => Some(("dolphin", DOLPHIN_SLOT_NAME)),
+        "melonds" => Some(("melonds", MELONDS_SLOT_NAME)),
+        "azahar" => Some(("azahar", AZAHAR_SLOT_NAME)),
+        "eden" => Some(("eden", EDEN_SLOT_NAME)),
+        "pcsx2" => Some(("pcsx2", PCSX2_SLOT_NAME)),
+        _ => None,
+    }
 }
 
 fn cleanup_old_remote_saves(

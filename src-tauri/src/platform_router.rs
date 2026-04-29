@@ -8,14 +8,12 @@ pub fn resolve_emulator_id_for_rom_path(
     let roms_root = PathBuf::from(&paths.roms);
     let rom = PathBuf::from(rom_path);
 
-    let relative = rom
-        .strip_prefix(&roms_root)
-        .map_err(|_| {
-            format!(
-                "La ROM n'est pas située dans le dossier Roms attendu: {}",
-                rom.to_string_lossy()
-            )
-        })?;
+    let relative = rom.strip_prefix(&roms_root).map_err(|_| {
+        format!(
+            "La ROM n'est pas située dans le dossier Roms attendu: {}",
+            rom.to_string_lossy()
+        )
+    })?;
 
     let first_component = relative
         .iter()
@@ -42,11 +40,12 @@ pub fn resolve_emulator_id_for_rom_path(
 
 fn map_folder_to_emulator(folder: &str) -> Option<&'static str> {
     match folder {
-        "wii" => Some("dolphin"),
-        "gamecube" | "gc" | "gamecube-wii" | "wii-gamecube" => Some("dolphin"),
-        "nds" | "ds" => Some("melonds"),
-        "3ds" => Some("azahar"),
-        "switch" | "nsw" => Some("eden"),
+        "wii" | "nintendo-wii" => Some("dolphin"),
+        "gamecube" | "game-cube" | "gc" | "nintendo-gamecube" | "nintendo-game-cube"
+        | "gamecube-wii" | "wii-gamecube" => Some("dolphin"),
+        "nds" | "ds" | "nintendo-ds" | "nintendo-nds" => Some("melonds"),
+        "3ds" | "nintendo-3ds" => Some("azahar"),
+        "switch" | "nsw" | "nintendo-switch" => Some("eden"),
         "ps2" => Some("pcsx2"),
         "psp" => Some("ppsspp"),
         "ps1" | "psx" | "playstation" => Some("duckstation"),
