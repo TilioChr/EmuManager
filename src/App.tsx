@@ -27,6 +27,8 @@ import {
 import { buildPortablePaths } from "./lib/portableConfig";
 import type {
   AppConfig,
+  AppUpdateDownloadResult,
+  AppUpdateStatus,
   ConfigureResult,
   ControllerProfile,
   ControllerProfileSaveResult,
@@ -109,6 +111,14 @@ interface EmulatorResourceProgressPayload {
   percent?: number | null;
 }
 
+interface AppUpdateProgressPayload {
+  version: string;
+  fileName: string;
+  downloadedBytes: number;
+  totalBytes?: number;
+  percent: number;
+}
+
 interface InstalledVersionMap {
   versions: Record<string, string>;
 }
@@ -147,6 +157,7 @@ export default function App() {
   const [saveSyncStatuses, setSaveSyncStatuses] = useState<Record<string, SaveSyncStatus>>({});
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,6 +173,14 @@ export default function App() {
 
   const [config, setConfig] = useState<AppConfig>({ installedEmulators: [] });
   const configRef = useRef(config);
+  const [currentAppVersion, setCurrentAppVersion] = useState<string | null>(null);
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [checkingAppUpdate, setCheckingAppUpdate] = useState(false);
+  const [appUpdatePromptOpen, setAppUpdatePromptOpen] = useState(false);
+  const [appUpdateError, setAppUpdateError] = useState<string | null>(null);
+  const [appUpdateProgress, setAppUpdateProgress] = useState<number | null>(null);
+  const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
+  const [appUpdateApplying, setAppUpdateApplying] = useState(false);
   const [rommSession, setRommSession] = useState<RommSession | null>(null);
   const [installProgressById, setInstallProgressById] = useState<Record<string, number>>({});
   const installProgressRef = useRef(installProgressById);
@@ -269,6 +288,52 @@ export default function App() {
     return byId;
   };
 
+  const checkForAppUpdate = async (
+    root = paths.root,
+    configOverride: AppConfig = configRef.current,
+    options: { manual?: boolean; silent?: boolean } = {}
+  ) => {
+    try {
+      setCheckingAppUpdate(true);
+      setAppUpdateError(null);
+      if (!isAppUpdateBusy) {
+        setAppUpdateProgress(null);
+      }
+      const status = await invoke<AppUpdateStatus>("check_app_update_command");
+      setCurrentAppVersion(status.currentVersion);
+      setAppUpdateStatus(status);
+
+      if (status.updateAvailable) {
+        const skipped = configOverride.skippedAppUpdateVersion === status.latestVersion;
+        if (options.manual || !skipped) {
+          setAppUpdatePromptOpen(true);
+        }
+        if (options.manual) {
+          notify("info", `EmuManager ${status.latestVersion ?? "update"} is available.`);
+        }
+      } else if (options.manual) {
+        notify("success", "EmuManager is up to date.");
+      }
+
+      void debugLog("info", "app-update", "Update check completed", {
+        root,
+        currentVersion: status.currentVersion,
+        latestVersion: status.latestVersion,
+        updateAvailable: status.updateAvailable,
+        assetName: status.assetName
+      });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setAppUpdateError(message);
+      if (options.manual && !options.silent) {
+        notify("error", message);
+      }
+      void debugLog("warning", "app-update", "Update check failed", message);
+    } finally {
+      setCheckingAppUpdate(false);
+    }
+  };
+
   useEffect(() => {
     const bootstrap = async () => {
       try {
@@ -276,6 +341,9 @@ export default function App() {
         const portablePaths = await invoke<PortablePaths>("init_portable_layout");
         setPaths(portablePaths);
         void debugLog("debug", "paths", "Portable layout initialized", portablePaths);
+
+        const appVersion = await invoke<string>("get_app_version_command");
+        setCurrentAppVersion(appVersion);
 
         const savedConfig = await invoke<AppConfig>("load_app_config", {
           root: portablePaths.root
@@ -343,6 +411,7 @@ export default function App() {
 
         await refreshInstalledVersions(portablePaths.root, builtin, mergedInstalledIds);
         await refreshEmulatorResourceStatuses(portablePaths.root);
+        void checkForAppUpdate(portablePaths.root, nextConfig, { silent: true });
 
         const firstInstalled = nextEmulators.find((entry) => entry.status === "installed");
         setSelectedEmulatorId(firstInstalled?.id ?? null);
@@ -368,6 +437,8 @@ export default function App() {
     let unlistenInstallProgress: UnlistenFn | null = null;
     let unlistenInstallComplete: UnlistenFn | null = null;
     let unlistenResourceProgress: UnlistenFn | null = null;
+    let unlistenAppUpdateProgress: UnlistenFn | null = null;
+    let unlistenAppUpdateComplete: UnlistenFn | null = null;
     let unlistenDebugEntry: UnlistenFn | null = null;
 
     const setupListeners = async () => {
@@ -472,6 +543,28 @@ export default function App() {
         }
       );
 
+      unlistenAppUpdateProgress = await listen<AppUpdateProgressPayload>(
+        "app-update-progress",
+        (event) => {
+          const payload = event.payload;
+          const percent = normalizeDownloadPercent(payload.percent);
+          setAppUpdateProgress(percent);
+        }
+      );
+
+      unlistenAppUpdateComplete = await listen<AppUpdateProgressPayload>(
+        "app-update-complete",
+        (event) => {
+          const payload = event.payload;
+          setAppUpdateProgress(100);
+          void debugLog("success", "app-update", `Downloaded EmuManager ${payload.version}`, {
+            fileName: payload.fileName,
+            downloadedBytes: payload.downloadedBytes,
+            totalBytes: payload.totalBytes
+          });
+        }
+      );
+
       unlistenDebugEntry = await listen<DebugLogEntry>("debug-log-entry", (event) => {
         if (event.payload.source === "backend") {
           recordDebugLogEntry(event.payload);
@@ -497,6 +590,12 @@ export default function App() {
       if (unlistenResourceProgress) {
         unlistenResourceProgress();
       }
+      if (unlistenAppUpdateProgress) {
+        unlistenAppUpdateProgress();
+      }
+      if (unlistenAppUpdateComplete) {
+        unlistenAppUpdateComplete();
+      }
       if (unlistenDebugEntry) {
         unlistenDebugEntry();
       }
@@ -512,6 +611,14 @@ export default function App() {
     emulators.find((entry) => entry.id === selectedEmulatorId) ??
     emulators.find((entry) => entry.status === "installed") ??
     null;
+  const isAppUpdateBusy = appUpdateDownloading || appUpdateApplying;
+  const appUpdateCurrentVersion = appUpdateStatus?.currentVersion ?? currentAppVersion ?? "Unknown";
+  const appUpdateLatestVersion = appUpdateStatus
+    ? appUpdateStatus.latestVersion ?? "No release"
+    : "Not checked";
+  const appUpdateSkipped =
+    Boolean(appUpdateStatus?.latestVersion) &&
+    config.skippedAppUpdateVersion === appUpdateStatus?.latestVersion;
 
   const persistConfig = async (nextConfig: AppConfig) => {
     configRef.current = nextConfig;
@@ -566,6 +673,95 @@ export default function App() {
 
   const clearNotificationHistory = () => {
     setNotificationHistory([]);
+  };
+
+  const updatePinnedLibraryItems = async (pinnedItemIds: string[]) => {
+    const nextConfig: AppConfig = {
+      ...configRef.current,
+      pinnedLibraryItems: pinnedItemIds
+    };
+
+    await persistConfig(nextConfig);
+  };
+
+  const closeAppUpdatePrompt = () => {
+    if (appUpdateDownloading || appUpdateApplying) {
+      return;
+    }
+
+    setAppUpdatePromptOpen(false);
+    setAppUpdateError(null);
+    setAppUpdateProgress(null);
+  };
+
+  const skipAppUpdateVersion = async () => {
+    const latestVersion = appUpdateStatus?.latestVersion;
+    if (!latestVersion) {
+      return;
+    }
+
+    const nextConfig: AppConfig = {
+      ...configRef.current,
+      skippedAppUpdateVersion: latestVersion
+    };
+
+    await persistConfig(nextConfig);
+    setAppUpdatePromptOpen(false);
+    notify("info", `Skipped EmuManager ${latestVersion}.`);
+    void debugLog("info", "app-update", "Skipped update version", {
+      latestVersion
+    });
+  };
+
+  const startAppUpdate = async () => {
+    if (!appUpdateStatus?.updateAvailable || !appUpdateStatus.latestVersion) {
+      return;
+    }
+
+    if (!appUpdateStatus.downloadUrl || !appUpdateStatus.assetName) {
+      const message = "No compatible EmuManager executable was found in the latest release.";
+      setAppUpdateError(message);
+      notify("error", message);
+      return;
+    }
+
+    try {
+      setAppUpdateDownloading(true);
+      setAppUpdateApplying(false);
+      setAppUpdateProgress(0);
+      setAppUpdateError(null);
+      notify("info", `Downloading EmuManager ${appUpdateStatus.latestVersion}...`);
+      void debugLog("info", "app-update", "Starting app update download", {
+        latestVersion: appUpdateStatus.latestVersion,
+        assetName: appUpdateStatus.assetName
+      });
+
+      const result = await invoke<AppUpdateDownloadResult>("download_app_update_command", {
+        root: paths.root,
+        request: {
+          version: appUpdateStatus.latestVersion,
+          assetName: appUpdateStatus.assetName,
+          downloadUrl: appUpdateStatus.downloadUrl,
+          assetSize: appUpdateStatus.assetSize ?? undefined
+        }
+      });
+
+      setAppUpdateApplying(true);
+      notify("info", "Applying update and relaunching...");
+      void debugLog("info", "app-update", "Applying app update", result);
+
+      await invoke("apply_app_update_command", {
+        filePath: result.filePath
+      });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setAppUpdateError(message);
+      notify("error", message);
+      void debugLog("error", "app-update", "App update failed", message);
+    } finally {
+      setAppUpdateDownloading(false);
+      setAppUpdateApplying(false);
+    }
   };
 
   const handleManualImportDrop = (droppedPaths: string[]) => {
@@ -1396,6 +1592,9 @@ export default function App() {
             <button className="primary-button" onClick={() => setShowPicker(true)}>
               Emulators
             </button>
+            <button className="ghost-button sidebar-settings-button" onClick={() => setShowSettings(true)}>
+              Settings
+            </button>
 
             <nav className="emulator-list">
               {emulators
@@ -1463,12 +1662,15 @@ export default function App() {
             />
 
             <LibraryPanel
+              root={paths.root}
               session={rommSession}
               localRoms={localRoms}
               saveSyncStatuses={saveSyncStatuses}
               onDownloadGame={handleDownloadGame}
               onLaunchLocalRom={launchSpecificRom}
               onRequestDeleteLocalRom={requestDeleteLocalRom}
+              pinnedItemIds={config.pinnedLibraryItems ?? []}
+              onPinnedItemIdsChange={updatePinnedLibraryItems}
               downloadProgressById={downloadProgressById}
               runningRomPaths={runningRomPaths}
               notice={libraryNotice}
@@ -1613,6 +1815,169 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showSettings ? (
+        <div className="modal-backdrop" onClick={() => !isAppUpdateBusy && setShowSettings(false)}>
+          <div className="modal settings-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Settings</h2>
+                <p className="panel-subtitle">EmuManager</p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={isAppUpdateBusy}
+                onClick={() => setShowSettings(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="version-grid">
+              <div className="version-row">
+                <span>Current version</span>
+                <strong>{appUpdateCurrentVersion}</strong>
+              </div>
+              <div className="version-row">
+                <span>Latest version</span>
+                <strong>{appUpdateLatestVersion}</strong>
+              </div>
+              <div className="version-row">
+                <span>Status</span>
+                <strong>
+                  {checkingAppUpdate
+                    ? "Checking..."
+                    : appUpdateStatus?.updateAvailable
+                      ? appUpdateSkipped
+                        ? "Skipped"
+                        : "Update available"
+                      : appUpdateStatus
+                        ? "Up to date"
+                        : "Not checked"}
+                </strong>
+              </div>
+              {appUpdateStatus?.assetName ? (
+                <div className="version-row">
+                  <span>Update asset</span>
+                  <strong>{appUpdateStatus.assetName}</strong>
+                </div>
+              ) : null}
+            </div>
+
+            {appUpdateError ? (
+              <div className="inline-notice inline-notice-error">{appUpdateError}</div>
+            ) : null}
+
+            {typeof appUpdateProgress === "number" ? (
+              <div className="update-progress">
+                <div className="mapping-progress-track">
+                  <span style={{ width: `${normalizeDownloadPercent(appUpdateProgress)}%` }} />
+                </div>
+                <span>
+                  {appUpdateApplying
+                    ? "Applying update..."
+                    : `Downloading... ${Math.round(normalizeDownloadPercent(appUpdateProgress))}%`}
+                </span>
+              </div>
+            ) : null}
+
+            <div className="settings-actions">
+              <button
+                className="ghost-button"
+                disabled={checkingAppUpdate || isAppUpdateBusy}
+                onClick={() => void checkForAppUpdate(paths.root, configRef.current, { manual: true })}
+              >
+                {checkingAppUpdate ? "Checking..." : "Check for updates"}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!appUpdateStatus?.updateAvailable || appUpdateSkipped || isAppUpdateBusy}
+                onClick={() => void skipAppUpdateVersion()}
+              >
+                Skip version
+              </button>
+              <button
+                className="primary-button"
+                disabled={!appUpdateStatus?.updateAvailable || !appUpdateStatus.downloadUrl || isAppUpdateBusy}
+                onClick={() => setAppUpdatePromptOpen(true)}
+              >
+                Update now
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {appUpdatePromptOpen && appUpdateStatus?.updateAvailable ? (
+        <div className="modal-backdrop" onClick={closeAppUpdatePrompt}>
+          <div className="modal confirmation-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="panel-title">Update EmuManager?</h2>
+                <p className="panel-subtitle">
+                  {appUpdateCurrentVersion} to {appUpdateStatus.latestVersion}
+                </p>
+              </div>
+              <button className="ghost-button" disabled={isAppUpdateBusy} onClick={closeAppUpdatePrompt}>
+                Close
+              </button>
+            </div>
+
+            <p className="confirmation-copy">
+              A new EmuManager build is available. The app will download it, replace the current
+              executable, and relaunch.
+            </p>
+
+            {appUpdateStatus.assetName ? (
+              <div className="version-row update-asset-row">
+                <span>Asset</span>
+                <strong>{appUpdateStatus.assetName}</strong>
+              </div>
+            ) : (
+              <div className="inline-notice inline-notice-warning">
+                No compatible Windows executable was found in this release.
+              </div>
+            )}
+
+            {appUpdateError ? (
+              <div className="inline-notice inline-notice-error">{appUpdateError}</div>
+            ) : null}
+
+            {typeof appUpdateProgress === "number" ? (
+              <div className="update-progress">
+                <div className="mapping-progress-track">
+                  <span style={{ width: `${normalizeDownloadPercent(appUpdateProgress)}%` }} />
+                </div>
+                <span>
+                  {appUpdateApplying
+                    ? "Applying update..."
+                    : `Downloading... ${Math.round(normalizeDownloadPercent(appUpdateProgress))}%`}
+                </span>
+              </div>
+            ) : null}
+
+            <div className="confirmation-actions save-conflict-actions">
+              <button className="ghost-button" disabled={isAppUpdateBusy} onClick={closeAppUpdatePrompt}>
+                Remind me later
+              </button>
+              <button
+                className="ghost-button"
+                disabled={isAppUpdateBusy}
+                onClick={() => void skipAppUpdateVersion()}
+              >
+                Skip version
+              </button>
+              <button
+                className="primary-button"
+                disabled={!appUpdateStatus.downloadUrl || isAppUpdateBusy}
+                onClick={() => void startAppUpdate()}
+              >
+                {isAppUpdateBusy ? "Updating..." : "Update and restart"}
+              </button>
             </div>
           </div>
         </div>

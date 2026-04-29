@@ -67,6 +67,8 @@ export interface AppConfig {
     username: string;
   };
   installedEmulators: string[];
+  skippedAppUpdateVersion?: string | null;
+  pinnedLibraryItems?: string[];
 }
 
 export interface InstallResult {
@@ -101,6 +103,25 @@ export interface LaunchResult {
 export interface DownloadResult {
   filePath: string;
   fileName: string;
+  bytesWritten: number;
+}
+
+export interface AppUpdateStatus {
+  currentVersion: string;
+  latestVersion?: string | null;
+  updateAvailable: boolean;
+  releaseName?: string | null;
+  releaseUrl?: string | null;
+  publishedAt?: string | null;
+  assetName?: string | null;
+  assetSize?: number | null;
+  downloadUrl?: string | null;
+}
+
+export interface AppUpdateDownloadResult {
+  version: string;
+  assetName: string;
+  filePath: string;
   bytesWritten: number;
 }
 

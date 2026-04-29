@@ -20,7 +20,9 @@ mod platform_router;
 mod portable_paths;
 mod process_launcher;
 mod rom_downloader;
+mod romm_media_cache;
 mod romm_sync;
+mod self_update;
 
 use config_store::{load_config, save_config, AppConfig};
 use controller_profile_writer::{apply_controller_profile, ControllerWriteResult};
@@ -49,9 +51,14 @@ use manual_import::{
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult, DownloadRomRequest};
+use romm_media_cache::{cache_romm_media, RommMediaCacheRequest, RommMediaCacheResult};
 use romm_sync::{
     get_save_conflict_status, get_save_sync_statuses, register_rom_mapping, RommLaunchSession,
     SaveConflictStatus, SaveSyncStatus,
+};
+use self_update::{
+    apply_update, check_for_update, current_version, download_update, AppUpdateDownloadRequest,
+    AppUpdateDownloadResult, AppUpdateStatus,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -74,6 +81,42 @@ struct ControllerProfileSaveResult {
 #[tauri::command]
 fn get_builtin_emulators() -> Vec<EmulatorDefinition> {
     built_in_emulators()
+}
+
+#[tauri::command]
+fn get_app_version_command() -> String {
+    current_version().to_string()
+}
+
+#[tauri::command]
+async fn cache_romm_media_command(
+    root: Option<String>,
+    request: RommMediaCacheRequest,
+) -> Result<RommMediaCacheResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    cache_romm_media(&paths, &request).await
+}
+
+#[tauri::command]
+async fn check_app_update_command(app: tauri::AppHandle) -> Result<AppUpdateStatus, String> {
+    check_for_update(&app).await
+}
+
+#[tauri::command]
+async fn download_app_update_command(
+    app: tauri::AppHandle,
+    root: Option<String>,
+    request: AppUpdateDownloadRequest,
+) -> Result<AppUpdateDownloadResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    download_update(&app, &paths, &request).await
+}
+
+#[tauri::command]
+fn apply_app_update_command(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
+    apply_update(&app, &file_path)
 }
 
 #[tauri::command]
@@ -510,7 +553,8 @@ async fn launch_game_auto_command(
 ) -> Result<GameLaunchResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
-    let emulator_id_for_launch = platform_router::resolve_emulator_id_for_rom_path(&paths, &rom_path)?;
+    let emulator_id_for_launch =
+        platform_router::resolve_emulator_id_for_rom_path(&paths, &rom_path)?;
     ensure_local_resource_configuration(&paths, &emulator_id_for_launch)?;
 
     if let Some(session) = romm_session.as_ref() {
@@ -576,6 +620,11 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_builtin_emulators,
+            get_app_version_command,
+            cache_romm_media_command,
+            check_app_update_command,
+            download_app_update_command,
+            apply_app_update_command,
             get_installed_emulator_versions,
             init_portable_layout,
             load_app_config,

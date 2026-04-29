@@ -51,6 +51,17 @@ export interface RommGame {
   file_url?: string;
   fileUrl?: string;
 
+  summary?: string;
+  description?: string;
+  overview?: string;
+  cover_url?: string;
+  coverUrl?: string;
+  thumbnail_url?: string;
+  thumbnailUrl?: string;
+  image_url?: string;
+  imageUrl?: string;
+  screenshots?: unknown;
+
   files?: RommGameFile[];
 
   [key: string]: unknown;
@@ -200,6 +211,21 @@ export async function getRommGames(session: RommSession): Promise<RommGame[]> {
   }
 
   return payload.items || payload.results || [];
+}
+
+export async function getRommGameDetails(
+  session: RommSession,
+  romId: string | number
+): Promise<RommGame> {
+  const payload = await rommFetch<
+    RommGame | { item?: RommGame; result?: RommGame; data?: RommGame }
+  >(session, `/api/roms/${encodeURIComponent(String(romId))}`);
+
+  if ("name" in payload && "id" in payload) {
+    return payload;
+  }
+
+  return payload.item || payload.result || payload.data || (payload as RommGame);
 }
 
 export async function getLatestRommSave(

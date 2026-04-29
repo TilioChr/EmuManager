@@ -17,6 +17,9 @@ pub struct RommConnectionConfig {
 pub struct AppConfig {
     pub romm: Option<RommConnectionConfig>,
     pub installed_emulators: Vec<String>,
+    pub skipped_app_update_version: Option<String>,
+    #[serde(default)]
+    pub pinned_library_items: Vec<String>,
 }
 
 pub fn load_config(paths: &PortablePaths) -> Result<AppConfig, String> {
