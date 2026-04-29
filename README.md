@@ -1,13 +1,10 @@
 # EmuManager
 
-EmuManager is a portable interface to centralize emulator installation, management, and game launching, with direct integration to RomM for ROM handling.
+EmuManager is a portable interface to centralize emulator installation, management, and game launching, with direct integration to RomM.
 
-## Goal
+## Installation
 
-Make emulation as simple as possible:
-- easy and fast installation
-- direct game launching
-- minimal setup required
+Téléchargez la [**dernière version disponible**](https://github.com/TilioChr/EmuManager/releases/latest).
 
 ## Supported Emulators
 
@@ -19,33 +16,19 @@ Make emulation as simple as possible:
 
 ## Features
 
-- Easy emulator installation
+- Easy emulator installation and updates
 - Fully portable setup (everything in one folder)
 - RomM integration:
-  - server connection
-  - library browsing
-  - direct game download
-- Automatic ROM organization by platform
-- Auto-launch with the correct emulator
-- Installed emulator version detection
-- Clean, usage-focused UI
+  - Library browsing
+  - Direct game downloads
+  - Save synchronization
+  - Automatic BIOS/firmware/key installation
+- Local ROM handling
+- Easy control mapping
+- Simple graphics settings
 
 ## Stack
 
 - Frontend: React + Vite
 - Backend: Rust (Tauri)
 - Communication: Tauri IPC
-
-## Project Status
-
-Version 0.1:
-- fully working foundation
-- focused on simplicity and plug & play
-- more improvements coming (UI, controller support, advanced config)
-
-## Run the project
-
-```bash
-npm install
-npm run tauri dev
-```
