@@ -18,6 +18,13 @@ pub struct RommMediaCacheRequest {
     pub bearer_token: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RommCachedMediaRequest {
+    pub media_id: String,
+    pub media_kind: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RommMediaCacheResult {
@@ -98,6 +105,22 @@ pub async fn cache_romm_media(
         mime_type: mime_type.clone(),
         data_url: format!("data:{};base64,{}", mime_type, STANDARD.encode(bytes)),
     })
+}
+
+pub fn read_romm_cached_media(
+    paths: &PortablePaths,
+    request: &RommCachedMediaRequest,
+) -> Result<Option<RommMediaCacheResult>, String> {
+    let media_kind = sanitize_path_part(&request.media_kind);
+    let media_id = sanitize_path_part(&request.media_id);
+    let cache_dir = Path::new(&paths.data)
+        .join("media-cache")
+        .join("romm")
+        .join(&media_kind);
+
+    Ok(find_cached_media(&cache_dir, &media_id)
+        .map(|cached_path| read_cached_media(&media_id, &media_kind, cached_path))
+        .transpose()?)
 }
 
 async fn download_media(

@@ -1,6 +1,6 @@
 [package]
 name = "emumanager"
-version = "0.1.0"
+version = "0.4.0-Alpha"
 description = "EmuManager"
 authors = ["Sahhperlipopette"]
 license = "Proprietary"

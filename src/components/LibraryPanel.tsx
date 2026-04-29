@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   getLatestRommSave,
   getRommGameDetails,
+  getRommGameScreenshots,
   getRommGames,
   resolveGameLocalFileName,
   type RommGame,
@@ -40,6 +41,7 @@ interface LibraryItem {
   title: string;
   platform: string;
   fileName: string;
+  fileSizeBytes?: number;
   downloaded: boolean;
   localPath?: string;
   rommId?: string;
@@ -78,6 +80,7 @@ export default function LibraryPanel({
   pendingManualImportFileName = null
 }: LibraryPanelProps) {
   const [games, setGames] = useState<RommGame[]>([]);
+  const [cachedGamesByRommId, setCachedGamesByRommId] = useState<Record<string, RommGame>>({});
   const [remoteSaveStatuses, setRemoteSaveStatuses] = useState<Record<string, RommSaveEntry | null>>({});
   const [coverDataById, setCoverDataById] = useState<Record<string, string>>({});
   const coverDataRef = useRef(coverDataById);
@@ -105,12 +108,48 @@ export default function LibraryPanel({
     if (!session) {
       setGames([]);
       setRemoteSaveStatuses({});
-      setCoverDataById({});
-      setScreenshotDataByUrl({});
       setSelectedDetailItem(null);
       setDetailGame(null);
     }
   }, [session]);
+
+  const localRommIds = useMemo(
+    () =>
+      unique(
+        localRoms
+          .map((rom) => saveSyncStatuses[rom.filePath]?.rommId)
+          .filter((rommId): rommId is string => typeof rommId === "string" && rommId.length > 0)
+      ),
+    [localRoms, saveSyncStatuses]
+  );
+
+  useEffect(() => {
+    if (!localRommIds.length) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCachedMetadata = async () => {
+      try {
+        const cachedGames = await loadCachedRommGameMetadata(root, localRommIds);
+        if (!cancelled) {
+          setCachedGamesByRommId((previous) => ({
+            ...previous,
+            ...mapGamesByRommId(cachedGames)
+          }));
+        }
+      } catch (reason) {
+        void debugLog("warning", "library", "Cached RomM metadata load failed", reason);
+      }
+    };
+
+    void loadCachedMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localRommIds, root]);
 
   const localByRommId = useMemo(() => {
     const map = new Map<string, LocalRomEntry>();
@@ -136,6 +175,7 @@ export default function LibraryPanel({
         title: game.name,
         platform,
         fileName,
+        fileSizeBytes: localMatch?.fileSizeBytes ?? game.fs_size_bytes,
         downloaded: Boolean(localMatch),
         localPath: localMatch?.filePath,
         rommId,
@@ -162,16 +202,26 @@ export default function LibraryPanel({
           !activeDownloadItems.some((item) => isLocalRomForRemoteItem(rom, item))
       )
       .map((rom) => ({
-        id: `local-${rom.filePath}`,
-        title: stripExtension(rom.fileName),
-        platform: rom.platformGuess,
-        fileName: rom.fileName,
-        downloaded: true,
-        localPath: rom.filePath,
-        rommId: saveSyncStatuses[rom.filePath]?.rommId ?? undefined,
-        localSaveStatus: saveSyncStatuses[rom.filePath],
-        localOnly: !saveSyncStatuses[rom.filePath]?.rommId
-      }));
+        rom,
+        rommId: saveSyncStatuses[rom.filePath]?.rommId ?? undefined
+      }))
+      .map(({ rom, rommId }) => {
+        const cachedGame = rommId ? cachedGamesByRommId[rommId] : undefined;
+
+        return {
+          id: `local-${rom.filePath}`,
+          title: cachedGame?.name ?? stripExtension(rom.fileName),
+          platform: cachedGame ? getRemotePlatform(cachedGame) : rom.platformGuess,
+          fileName: rom.fileName,
+          fileSizeBytes: rom.fileSizeBytes,
+          downloaded: true,
+          localPath: rom.filePath,
+          rommId,
+          localSaveStatus: saveSyncStatuses[rom.filePath],
+          remoteGame: cachedGame,
+          localOnly: !rommId
+        };
+      });
 
     return [...remoteItems, ...localOnlyItems].sort((left, right) => {
       const leftPinned = pinRank(pinnedItemIds, left.id);
@@ -195,6 +245,7 @@ export default function LibraryPanel({
     });
   }, [
     downloadProgressById,
+    cachedGamesByRommId,
     games,
     localByRommId,
     localRoms,
@@ -275,6 +326,47 @@ export default function LibraryPanel({
   }, [mergedItems, platformFilter, search]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadCachedCovers = async () => {
+      for (const item of filteredItems.slice(0, 96)) {
+        if (cancelled) {
+          return;
+        }
+
+        if (!item.rommId || coverDataRef.current[item.id]) {
+          continue;
+        }
+
+        try {
+          const result = await readCachedRommMedia(root, {
+            mediaId: `${item.rommId}-cover`,
+            mediaKind: "cover"
+          });
+
+          if (!cancelled && result) {
+            setCoverDataById((previous) => ({
+              ...previous,
+              [item.id]: result.dataUrl
+            }));
+          }
+        } catch (reason) {
+          void debugLog("warning", "library", "Cached cover load failed", {
+            itemId: item.id,
+            reason: reason instanceof Error ? reason.message : String(reason)
+          });
+        }
+      }
+    };
+
+    void loadCachedCovers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredItems, root]);
+
+  useEffect(() => {
     if (!session) {
       return;
     }
@@ -337,9 +429,63 @@ export default function LibraryPanel({
 
   const detailSource = detailGame ?? selectedDetailItem?.remoteGame ?? null;
   const screenshotUrls = useMemo(
-    () => (session && detailSource ? resolveGameScreenshotUrls(session, detailSource) : []),
-    [detailSource, session]
+    () => {
+      const liveUrls = session && detailSource ? resolveGameScreenshotUrls(session, detailSource) : [];
+      if (liveUrls.length) {
+        return liveUrls;
+      }
+
+      return selectedDetailItem?.rommId ? cachedScreenshotKeys(selectedDetailItem.rommId) : [];
+    },
+    [detailSource, selectedDetailItem?.rommId, session]
   );
+
+  useEffect(() => {
+    if (!selectedDetailItem?.rommId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCachedScreenshots = async () => {
+      for (let index = 1; index <= 8; index += 1) {
+        if (cancelled) {
+          return;
+        }
+
+        const key = cachedScreenshotKey(selectedDetailItem.rommId!, index);
+        if (screenshotDataRef.current[key]) {
+          continue;
+        }
+
+        try {
+          const result = await readCachedRommMedia(root, {
+            mediaId: `${selectedDetailItem.rommId}-screenshot-${index}`,
+            mediaKind: "screenshot"
+          });
+
+          if (!cancelled && result) {
+            setScreenshotDataByUrl((previous) => ({
+              ...previous,
+              [key]: result.dataUrl
+            }));
+          }
+        } catch (reason) {
+          void debugLog("warning", "library", "Cached screenshot load failed", {
+            itemId: selectedDetailItem.id,
+            index,
+            reason: reason instanceof Error ? reason.message : String(reason)
+          });
+        }
+      }
+    };
+
+    void loadCachedScreenshots();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [root, selectedDetailItem]);
 
   useEffect(() => {
     if (!session || !selectedDetailItem?.rommId || !screenshotUrls.length) {
@@ -403,6 +549,11 @@ export default function LibraryPanel({
       });
       const roms = await getRommGames(session);
       setGames(roms);
+      setCachedGamesByRommId((previous) => ({
+        ...previous,
+        ...mapGamesByRommId(roms)
+      }));
+      void cacheRommGameMetadataBatch(root, roms);
       void debugLog("success", "library", "RomM library loaded", {
         count: roms.length
       });
@@ -438,8 +589,15 @@ export default function LibraryPanel({
     }
 
     setDetailLoading(true);
-    void getRommGameDetails(session, item.rommId)
-      .then(setDetailGame)
+    void loadRommGameDetailsWithScreenshots(session, item.rommId)
+      .then((game) => {
+        setDetailGame(game);
+        setCachedGamesByRommId((previous) => ({
+          ...previous,
+          [String(game.id)]: game
+        }));
+        void cacheRommGameMetadata(root, game);
+      })
       .catch((reason) => {
         setDetailGame(item.remoteGame ?? null);
         setDetailError(reason instanceof Error ? reason.message : String(reason));
@@ -757,9 +915,10 @@ function GameDetailModal({
   onClose: () => void;
 }) {
   const description = game ? resolveGameDescription(game) : null;
-  const metadataRows = game ? buildMetadataRows(game, item) : [];
-  const platformRows = game ? buildPlatformRows(game, item) : buildLocalPlatformRows(item);
-  const localRows = buildLocalRows(item);
+  const metadataRows = game ? buildEssentialRows(game, item) : buildLocalEssentialRows(item);
+  const visibleScreenshots = screenshotUrls.filter(
+    (url) => !isCachedScreenshotKey(url) || Boolean(screenshotDataByUrl[url])
+  );
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -788,17 +947,16 @@ function GameDetailModal({
             </p>
             <div className="detail-badge-row">
               <span>{item.downloaded ? "Downloaded" : "Remote"}</span>
-              <span>{item.localOnly ? "Local only" : "RomM linked"}</span>
-              {session ? <span>Online details</span> : <span>Offline</span>}
+              <span>{session ? "RomM live" : "Cached"}</span>
             </div>
           </div>
         </div>
 
         <section className="game-detail-section">
           <h3>Screenshots</h3>
-          {screenshotUrls.length ? (
+          {visibleScreenshots.length ? (
             <div className="screenshot-strip">
-              {screenshotUrls.map((url) => (
+              {visibleScreenshots.map((url) => (
                 <img
                   key={url}
                   src={screenshotDataByUrl[url] ?? url}
@@ -813,17 +971,8 @@ function GameDetailModal({
         </section>
 
         <div className="game-detail-grid">
-          <DetailSection title="Metadata" rows={metadataRows} empty="No metadata from RomM." />
-          <DetailSection title="Platform" rows={platformRows} empty="No platform data." />
-          <DetailSection title="Library" rows={localRows} empty="No local library data." />
+          <DetailSection title="Info" rows={metadataRows} empty="No metadata from RomM." />
         </div>
-
-        {game ? (
-          <details className="raw-metadata">
-            <summary>Additional RomM fields</summary>
-            <pre>{JSON.stringify(compactGameDetails(game), null, 2)}</pre>
-          </details>
-        ) : null}
       </div>
     </div>
   );
@@ -875,6 +1024,65 @@ async function cacheRommMedia(
       bearerToken
     }
   });
+}
+
+async function readCachedRommMedia(
+  root: string,
+  request: { mediaId: string; mediaKind: string }
+): Promise<RommMediaCacheResult | null> {
+  return invoke<RommMediaCacheResult | null>("read_romm_cached_media_command", {
+    root,
+    request
+  });
+}
+
+async function cacheRommGameMetadata(root: string, game: RommGame): Promise<void> {
+  await invoke("cache_romm_game_metadata_command", {
+    root,
+    game
+  });
+}
+
+async function cacheRommGameMetadataBatch(root: string, games: RommGame[]): Promise<void> {
+  for (const game of games) {
+    try {
+      await cacheRommGameMetadata(root, game);
+    } catch (reason) {
+      void debugLog("warning", "library", "RomM metadata cache write failed", {
+        id: game.id,
+        reason: reason instanceof Error ? reason.message : String(reason)
+      });
+    }
+  }
+}
+
+async function loadCachedRommGameMetadata(root: string, rommIds: string[]): Promise<RommGame[]> {
+  return invoke<RommGame[]>("load_romm_game_metadata_command", {
+    root,
+    rommIds
+  });
+}
+
+async function loadRommGameDetailsWithScreenshots(
+  session: RommSession,
+  rommId: string
+): Promise<RommGame> {
+  const [game, screenshots] = await Promise.all([
+    getRommGameDetails(session, rommId),
+    getRommGameScreenshots(session, rommId).catch((reason) => {
+      void debugLog("warning", "library", "RomM screenshot assets load failed", {
+        rommId,
+        reason: reason instanceof Error ? reason.message : String(reason)
+      });
+      return [];
+    })
+  ]);
+
+  return screenshots.length ? { ...game, screenshots } : game;
+}
+
+function mapGamesByRommId(games: RommGame[]): Record<string, RommGame> {
+  return Object.fromEntries(games.map((game) => [String(game.id), game]));
 }
 
 function shouldAuthenticateMediaRequest(session: RommSession, url: string): boolean {
@@ -1059,6 +1267,18 @@ function coverInitials(title: string): string {
   return initials || "GM";
 }
 
+function cachedScreenshotKey(rommId: string, index: number): string {
+  return `cached-screenshot:${rommId}:${index}`;
+}
+
+function cachedScreenshotKeys(rommId: string): string[] {
+  return Array.from({ length: 8 }, (_, index) => cachedScreenshotKey(rommId, index + 1));
+}
+
+function isCachedScreenshotKey(value: string): boolean {
+  return value.startsWith("cached-screenshot:");
+}
+
 function resolveGameCoverUrls(session: RommSession, game: RommGame): string[] {
   return resolveMediaUrls(session, game, [
     "cover_url",
@@ -1082,10 +1302,25 @@ function resolveGameScreenshotUrls(session: RommSession, game: RommGame): string
   return resolveMediaUrls(session, game, [
     "screenshot",
     "screenshots",
+    "screen_shots",
     "screenshot_url",
     "screenshotUrl",
     "screenshot_urls",
     "screenshotUrls",
+    "screenshots_urls",
+    "screenshotsUrls",
+    "url_screenshot",
+    "urlScreenshot",
+    "url_screenshots",
+    "urlScreenshots",
+    "path_screenshot",
+    "pathScreenshot",
+    "path_screenshots",
+    "pathScreenshots",
+    "merged_screenshots",
+    "mergedScreenshots",
+    "igdb_screenshots",
+    "igdbScreenshots",
     "images",
     "image_urls",
     "imageUrls",
@@ -1129,10 +1364,32 @@ function collectMediaStrings(value: unknown, output: string[]) {
   }
 
   if (isRecord(value)) {
+    const imageId = value.image_id ?? value.imageId;
+    if (typeof imageId === "string" && imageId.trim()) {
+      output.push(`https://images.igdb.com/igdb/image/upload/t_screenshot_big/${imageId.trim()}.jpg`);
+    }
+
     for (const [key, entry] of Object.entries(value)) {
       const normalizedKey = key.toLowerCase();
       if (
-        ["url", "path", "src", "image", "image_url", "thumbnail", "cover"].includes(normalizedKey) ||
+        [
+          "url",
+          "path",
+          "src",
+          "image",
+          "imageurl",
+          "image_url",
+          "thumbnail",
+          "cover",
+          "download_url",
+          "downloadurl",
+          "url_download",
+          "asset_path",
+          "assetpath",
+          "file",
+          "file_name",
+          "filename"
+        ].includes(normalizedKey) ||
         normalizedKey.includes("screenshot")
       ) {
         collectMediaStrings(entry, output);
@@ -1144,6 +1401,7 @@ function collectMediaStrings(value: unknown, output: string[]) {
 function isLikelyImageValue(value: string): boolean {
   return (
     /^https?:\/\//i.test(value) ||
+    value.startsWith("//") ||
     value.startsWith("/") ||
     /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(value)
   );
@@ -1155,11 +1413,11 @@ function absolutizeMediaUrl(baseUrl: string, value: string): string | null {
     return null;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
+  try {
+    return new URL(trimmed, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
+  } catch {
+    return null;
   }
-
-  return `${baseUrl.replace(/\/+$/, "")}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`;
 }
 
 function resolveGameDescription(game: RommGame): string | null {
@@ -1173,42 +1431,22 @@ function resolveGameDescription(game: RommGame): string | null {
   ]);
 }
 
-function buildMetadataRows(game: RommGame, item: LibraryItem): DetailRow[] {
+function buildEssentialRows(game: RommGame, item: LibraryItem): DetailRow[] {
   const rows: Array<[string, unknown]> = [
-    ["Release date", readFirstValue(game, ["release_date", "released", "first_release_date", "year"])],
-    ["Genres", readFirstValue(game, ["genres", "genre"])],
-    ["Developer", readFirstValue(game, ["developer", "developers"])],
-    ["Publisher", readFirstValue(game, ["publisher", "publishers"])],
-    ["Franchise", readFirstValue(game, ["franchise", "franchises", "collection"])],
-    ["Players", readFirstValue(game, ["players", "player_count", "max_players"])],
-    ["Rating", readFirstValue(game, ["rating", "score", "aggregated_rating"])],
+    ["Console", getRemotePlatform(game) || item.platform],
+    ["Release date", formatReleaseDate(readFirstValue(game, ["release_date", "released", "first_release_date", "year"]))],
     ["Region", readFirstValue(game, ["region", "regions"])],
-    ["File", item.fileName],
-    ["Size", readFirstValue(game, ["fs_size_bytes", "size"]) ?? (item.localPath ? null : undefined)]
+    ["Size", formatSize(readFirstValue(game, ["fs_size_bytes", "size"]) ?? item.fileSizeBytes)],
+    ["Genre", readFirstValue(game, ["genres", "genre"])]
   ];
 
   return rowsToDetails(rows);
 }
 
-function buildPlatformRows(game: RommGame, item: LibraryItem): DetailRow[] {
+function buildLocalEssentialRows(item: LibraryItem): DetailRow[] {
   return rowsToDetails([
-    ["Name", game.platform_name ?? item.platform],
-    ["Display name", game.platform_display_name],
-    ["Slug", game.platform_slug],
-    ["Folder slug", game.platform_fs_slug]
-  ]);
-}
-
-function buildLocalPlatformRows(item: LibraryItem): DetailRow[] {
-  return rowsToDetails([["Name", item.platform]]);
-}
-
-function buildLocalRows(item: LibraryItem): DetailRow[] {
-  return rowsToDetails([
-    ["Status", item.downloaded ? "Downloaded" : "Remote only"],
-    ["RomM ID", item.rommId],
-    ["Local path", item.localPath],
-    ["Local save", item.localSaveStatus?.hasLocalSave ? "Available" : "None"]
+    ["Console", item.platform],
+    ["Size", formatSize(item.fileSizeBytes)]
   ]);
 }
 
@@ -1238,7 +1476,25 @@ function readFirstValue(game: RommGame, keys: string[]): unknown {
 
 function gameRecords(game: RommGame): Record<string, unknown>[] {
   const records: Record<string, unknown>[] = [game as Record<string, unknown>];
-  for (const key of ["metadata", "metadatum", "igdb", "moby", "ss", "extra"]) {
+  for (const key of [
+    "metadata",
+    "metadatum",
+    "manual_metadata",
+    "manualMetadata",
+    "merged_metadata",
+    "mergedMetadata",
+    "igdb",
+    "igdb_metadata",
+    "igdbMetadata",
+    "moby",
+    "moby_metadata",
+    "mobyMetadata",
+    "ss",
+    "sgdb",
+    "ra_metadata",
+    "raMetadata",
+    "extra"
+  ]) {
     const value = (game as Record<string, unknown>)[key];
     if (isRecord(value)) {
       records.push(value);
@@ -1253,7 +1509,7 @@ function formatDetailValue(value: unknown): string | null {
   }
 
   if (typeof value === "number") {
-    return value > 1000000 ? formatBytes(value) : String(value);
+    return String(value);
   }
 
   if (typeof value === "boolean") {
@@ -1294,6 +1550,66 @@ function formatMaybeDate(value: string): string {
     return formatIsoTimestamp(value);
   }
   return value;
+}
+
+function formatReleaseDate(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    if (value >= 1900 && value <= 2100 && Number.isInteger(value)) {
+      return String(value);
+    }
+
+    const timestampMs = value > 100000000000 ? value : value * 1000;
+    const date = new Date(timestampMs);
+    return Number.isNaN(date.getTime()) ? String(value) : formatDisplayDate(date);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (/^\d{4}$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    if (/^\d+$/.test(trimmed)) {
+      return formatReleaseDate(Number(trimmed));
+    }
+
+    const date = new Date(trimmed);
+    return Number.isNaN(date.getTime()) ? trimmed : formatDisplayDate(date);
+  }
+
+  return formatDetailValue(value);
+}
+
+function formatDisplayDate(date: Date): string {
+  return date.toLocaleDateString("fr-FR", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit"
+  });
+}
+
+function formatSize(value: unknown): string | null {
+  if (typeof value === "number") {
+    return formatBytes(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numberValue = Number(value);
+    if (Number.isFinite(numberValue)) {
+      return formatBytes(numberValue);
+    }
+    return value.trim();
+  }
+
+  return null;
 }
 
 function formatBytes(value: number): string {

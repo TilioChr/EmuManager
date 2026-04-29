@@ -228,6 +228,37 @@ export async function getRommGameDetails(
   return payload.item || payload.result || payload.data || (payload as RommGame);
 }
 
+export async function getRommGameScreenshots(
+  session: RommSession,
+  romId: string | number
+): Promise<unknown[]> {
+  const encodedId = encodeURIComponent(String(romId));
+  const paths = [
+    `/api/screenshots?rom_id=${encodedId}`,
+    `/api/roms/${encodedId}/screenshots`,
+    `/api/roms/${encodedId}/assets/screenshots`
+  ];
+
+  for (const path of paths) {
+    try {
+      const payload = await rommFetch<unknown>(session, path);
+      const screenshots = unwrapRommList(payload);
+      if (screenshots.length > 0) {
+        return screenshots;
+      }
+    } catch (reason) {
+      if (
+        !(reason instanceof RommError) ||
+        ![400, 404, 405, 422].includes(reason.status ?? 0)
+      ) {
+        throw reason;
+      }
+    }
+  }
+
+  return [];
+}
+
 export async function getLatestRommSave(
   session: RommSession,
   romId: string | number,
@@ -309,6 +340,24 @@ export function resolveGameDownloadUrl(session: RommSession, game: RommGame): st
   }
 
   return null;
+}
+
+function unwrapRommList(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    for (const key of ["items", "results", "data", "screenshots", "assets"]) {
+      const value = record[key];
+      if (Array.isArray(value)) {
+        return value;
+      }
+    }
+  }
+
+  return [];
 }
 
 export function resolveGameLocalFileName(game: RommGame): string {

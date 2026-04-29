@@ -20,6 +20,7 @@ mod platform_router;
 mod portable_paths;
 mod process_launcher;
 mod rom_downloader;
+mod romm_library_cache;
 mod romm_media_cache;
 mod romm_sync;
 mod self_update;
@@ -51,7 +52,11 @@ use manual_import::{
 use portable_paths::{default_root, ensure_portable_tree, PortablePaths};
 use process_launcher::{launch_emulator, LaunchResult};
 use rom_downloader::{download_rom_to_library, DownloadResult, DownloadRomRequest};
-use romm_media_cache::{cache_romm_media, RommMediaCacheRequest, RommMediaCacheResult};
+use romm_library_cache::{cache_romm_game_metadata, load_romm_game_metadata};
+use romm_media_cache::{
+    cache_romm_media, read_romm_cached_media, RommCachedMediaRequest, RommMediaCacheRequest,
+    RommMediaCacheResult,
+};
 use romm_sync::{
     get_save_conflict_status, get_save_sync_statuses, register_rom_mapping, RommLaunchSession,
     SaveConflictStatus, SaveSyncStatus,
@@ -61,6 +66,7 @@ use self_update::{
     AppUpdateDownloadResult, AppUpdateStatus,
 };
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -96,6 +102,33 @@ async fn cache_romm_media_command(
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
     cache_romm_media(&paths, &request).await
+}
+
+#[tauri::command]
+fn read_romm_cached_media_command(
+    root: Option<String>,
+    request: RommCachedMediaRequest,
+) -> Result<Option<RommMediaCacheResult>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    read_romm_cached_media(&paths, &request)
+}
+
+#[tauri::command]
+fn cache_romm_game_metadata_command(root: Option<String>, game: Value) -> Result<(), String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    cache_romm_game_metadata(&paths, &game)
+}
+
+#[tauri::command]
+fn load_romm_game_metadata_command(
+    root: Option<String>,
+    romm_ids: Vec<String>,
+) -> Result<Vec<Value>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    load_romm_game_metadata(&paths, &romm_ids)
 }
 
 #[tauri::command]
@@ -622,6 +655,9 @@ fn main() {
             get_builtin_emulators,
             get_app_version_command,
             cache_romm_media_command,
+            read_romm_cached_media_command,
+            cache_romm_game_metadata_command,
+            load_romm_game_metadata_command,
             check_app_update_command,
             download_app_update_command,
             apply_app_update_command,

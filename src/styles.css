@@ -1584,8 +1584,12 @@ ol {
 
 .game-detail-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.game-detail-grid .detail-list {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .detail-list {
