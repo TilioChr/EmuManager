@@ -1,6 +1,6 @@
 # EmuManager
 
-EmuManager is a portable interface to centralize emulator installation, management, and game launching, with direct integration to RomM.
+EmuManager is a portable interface to centralize emulator installation, management, and game launching, with direct integration to [RomM](https://github.com/rommapp/romm).
 
 ## Installation
 
@@ -8,11 +8,11 @@ Téléchargez la [**dernière version disponible**](https://github.com/TilioChr/
 
 ## Supported Emulators
 
-- Dolphin (GameCube / Wii)
-- PCSX2 (PS2)
-- melonDS (Nintendo DS)
-- Azahar (Nintendo 3DS)
-- Eden (Nintendo Switch)
+- [Dolphin](https://github.com/dolphin-emu/dolphin) (GameCube / Wii)
+- [PCSX2](https://github.com/pcsx2/pcsx2) (PS2)
+- [melonDS](https://github.com/melonDS-emu/melonDS) (Nintendo DS)
+- [Azahar](https://github.com/azahar-emu/azahar) (Nintendo 3DS)
+- [Eden](https://git.eden-emu.dev/eden-emu/eden) (Nintendo Switch)
 
 ## Features
 
@@ -27,8 +27,8 @@ Téléchargez la [**dernière version disponible**](https://github.com/TilioChr/
 - Easy control mapping
 - Simple graphics settings
 
-## Stack
+## Disclaimer
 
-- Frontend: React + Vite
-- Backend: Rust (Tauri)
-- Communication: Tauri IPC
+EmuManager does not provide copyrighted ROMs, BIOS files, or encryption keys.
+
+Users are responsible for ensuring they own the original games they use.
