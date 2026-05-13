@@ -26,20 +26,7 @@ export default function CollapsiblePanel({
           onClick={() => setCollapsed((value) => !value)}
           aria-label={collapsed ? "Expand section" : "Collapse section"}
         >
-          <svg
-            className="collapsible-corner-icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              d="M7 10l5 5 5-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <span className="collapsible-corner-icon" aria-hidden="true" />
         </button>
 
         <div className="collapsible-header-main">

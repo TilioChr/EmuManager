@@ -1,5 +1,6 @@
 use crate::controller_profile_writer::apply_saved_controller_profile;
 use crate::emulator_installer::resolve_emulator_executable;
+use crate::graphics_profile_writer::apply_saved_graphics_profile;
 use crate::portable_paths::PortablePaths;
 use serde::Serialize;
 use std::process::Command;
@@ -16,6 +17,8 @@ pub struct LaunchResult {
 pub fn launch_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<LaunchResult, String> {
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
     let _ = apply_saved_controller_profile(paths, emulator_id);
+    apply_saved_graphics_profile(paths, emulator_id)
+        .map_err(|error| format!("Profil graphique non applique: {}", error))?;
 
     let working_directory = executable_path
         .parent()

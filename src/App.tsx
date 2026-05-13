@@ -6,6 +6,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import LibraryPanel from "./components/LibraryPanel";
 import RommConnectionCard from "./components/RommConnectionCard";
 import ControllerMappingPanel from "./components/ControllerMappingPanel";
+import GraphicsSettingsPanel from "./components/GraphicsSettingsPanel";
 import NotificationOverlay, {
   type NotificationEntry,
   type NotificationKind
@@ -37,6 +38,8 @@ import type {
   EmulatorEntry,
   EmulatorResourceSummary,
   GameLaunchResult,
+  GraphicsProfile,
+  GraphicsProfileSaveResult,
   InstallResult,
   LaunchResult,
   LocalRomEntry,
@@ -128,6 +131,7 @@ export default function App() {
   const [emulators, setEmulators] = useState<EmulatorEntry[]>([]);
   const [resourceSummaries, setResourceSummaries] = useState<Record<string, EmulatorResourceSummary>>({});
   const [resourceProgressByKey, setResourceProgressByKey] = useState<Record<string, EmulatorResourceProgressPayload>>({});
+  const [resourceImportingKey, setResourceImportingKey] = useState<string | null>(null);
   const [localRoms, setLocalRoms] = useState<LocalRomEntry[]>([]);
   const [localSaves, setLocalSaves] = useState<LocalSaveEntry[]>([]);
   const [manualImportPlatforms, setManualImportPlatforms] = useState<ManualImportPlatform[]>([]);
@@ -154,6 +158,7 @@ export default function App() {
   const [pendingUninstallEmulator, setPendingUninstallEmulator] = useState<EmulatorEntry | null>(null);
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
   const [controllerProfiles, setControllerProfiles] = useState<ControllerProfile[]>([]);
+  const [graphicsProfiles, setGraphicsProfiles] = useState<GraphicsProfile[]>([]);
   const [saveSyncStatuses, setSaveSyncStatuses] = useState<Record<string, SaveSyncStatus>>({});
   const [selectedEmulatorId, setSelectedEmulatorId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -366,6 +371,13 @@ export default function App() {
           }
         );
         setControllerProfiles(savedControllerProfiles);
+        const savedGraphicsProfiles = await invoke<GraphicsProfile[]>(
+          "load_graphics_profiles_command",
+          {
+            root: portablePaths.root
+          }
+        );
+        setGraphicsProfiles(savedGraphicsProfiles);
 
         const builtin = await invoke<Array<Omit<EmulatorEntry, "status">>>(
           "get_builtin_emulators"
@@ -616,10 +628,6 @@ export default function App() {
   const appUpdateLatestVersion = appUpdateStatus
     ? appUpdateStatus.latestVersion ?? "No release"
     : "Not checked";
-  const appUpdateSkipped =
-    Boolean(appUpdateStatus?.latestVersion) &&
-    config.skippedAppUpdateVersion === appUpdateStatus?.latestVersion;
-
   const persistConfig = async (nextConfig: AppConfig) => {
     configRef.current = nextConfig;
     setConfig(nextConfig);
@@ -637,6 +645,16 @@ export default function App() {
     });
 
     setControllerProfiles(result.profiles);
+    return result;
+  };
+
+  const saveGraphicsProfile = async (profile: GraphicsProfile) => {
+    const result = await invoke<GraphicsProfileSaveResult>("save_graphics_profile_command", {
+      root: paths.root,
+      profile
+    });
+
+    setGraphicsProfiles(result.profiles);
     return result;
   };
 
@@ -692,25 +710,6 @@ export default function App() {
     setAppUpdatePromptOpen(false);
     setAppUpdateError(null);
     setAppUpdateProgress(null);
-  };
-
-  const skipAppUpdateVersion = async () => {
-    const latestVersion = appUpdateStatus?.latestVersion;
-    if (!latestVersion) {
-      return;
-    }
-
-    const nextConfig: AppConfig = {
-      ...configRef.current,
-      skippedAppUpdateVersion: latestVersion
-    };
-
-    await persistConfig(nextConfig);
-    setAppUpdatePromptOpen(false);
-    notify("info", `Skipped EmuManager ${latestVersion}.`);
-    void debugLog("info", "app-update", "Skipped update version", {
-      latestVersion
-    });
   };
 
   const startAppUpdate = async () => {
@@ -1260,6 +1259,67 @@ export default function App() {
     }
   };
 
+  const importLocalResourceForEmulator = async (id: string, resourceId: string) => {
+    const importKey = resourceProgressKey(id, resourceId);
+    if (resourceImportingKey) {
+      return;
+    }
+
+    const summary = resourceSummaries[id];
+    const resourceLabel =
+      summary?.statuses.find((status) => status.id === resourceId)?.label ?? resourceId;
+    const displayName = emulators.find((emu) => emu.id === id)?.name ?? id;
+
+    try {
+      setResourceImportingKey(importKey);
+      const selectedPaths = await invoke<string[] | null>(
+        "pick_emulator_resource_files_command",
+        {
+          emulatorId: id,
+          resourceId
+        }
+      );
+
+      if (!selectedPaths?.length) {
+        return;
+      }
+
+      notify("info", `Importing ${resourceLabel} for ${displayName}...`);
+      void debugLog("info", "emulator-resource", `Importing local resource for ${id}`, {
+        resourceId,
+        sourceCount: selectedPaths.length
+      });
+
+      const result = await invoke<ResourceInstallResult>("import_emulator_resource_command", {
+        root: paths.root,
+        request: {
+          emulatorId: id,
+          resourceId,
+          sourcePaths: selectedPaths
+        }
+      });
+
+      setResourceSummaries((previous) => ({
+        ...previous,
+        [result.summary.emulatorId]: result.summary
+      }));
+      await refreshEmulatorResourceStatuses(paths.root);
+
+      notify("success", `${resourceLabel} imported for ${displayName}.`);
+      void debugLog("success", "emulator-resource", `Local resource imported for ${id}`, result);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      notify("error", message);
+      void debugLog("error", "emulator-resource", `Local resource import failed for ${id}`, {
+        resourceId,
+        message
+      });
+      await refreshEmulatorResourceStatuses(paths.root);
+    } finally {
+      setResourceImportingKey((current) => (current === importKey ? null : current));
+    }
+  };
+
   const ensureResourcesForEmulator = async (
     id: string,
     sessionOverride: RommSession | null = rommSession
@@ -1589,12 +1649,20 @@ export default function App() {
               <p className="muted">{installedCount} installed</p>
             </div>
 
-            <button className="primary-button" onClick={() => setShowPicker(true)}>
-              Emulators
-            </button>
-            <button className="ghost-button sidebar-settings-button" onClick={() => setShowSettings(true)}>
-              Settings
-            </button>
+            <div className="sidebar-actions">
+              <button className="primary-button" onClick={() => setShowPicker(true)}>
+                Emulators
+              </button>
+              <button
+                className="ghost-button sidebar-settings-button"
+                type="button"
+                title="Updates"
+                aria-label="Open update settings"
+                onClick={() => setShowSettings(true)}
+              >
+                <span className="update-icon" aria-hidden="true" />
+              </button>
+            </div>
 
             <nav className="emulator-list">
               {emulators
@@ -1617,23 +1685,27 @@ export default function App() {
                       >
                         <span className="emulator-menu-name-row">
                           <span className="emulator-menu-name">{emu.name}</span>
-                          <ResourceIndicators summary={resourceSummary} />
                         </span>
                         <span className="emulator-menu-platform">{emu.platformLabel}</span>
                         <span className="emulator-menu-version">Version {version}</span>
                       </button>
+                      <ResourceIndicators
+                        summary={resourceSummary}
+                        onImportResource={importLocalResourceForEmulator}
+                        importingResourceKey={resourceImportingKey}
+                      />
                       <button
                         className="emulator-menu-launch-button"
                         type="button"
                         disabled={isLaunching}
-                        title={`Launch ${emu.name}`}
-                        aria-label={`Launch ${emu.name}`}
+                        title={`Open ${emu.name}`}
+                        aria-label={`Open ${emu.name}`}
                         onClick={() => void launchSelectedEmulator(emu.id)}
                       >
                         {isLaunching ? (
                           <span className="button-spinner" aria-hidden="true" />
                         ) : (
-                          <span className="play-icon" aria-hidden="true" />
+                          <span className="open-window-icon" aria-hidden="true" />
                         )}
                       </button>
                     </div>
@@ -1659,6 +1731,12 @@ export default function App() {
               selectedEmulator={selectedEmulator}
               profiles={controllerProfiles}
               onSaveProfile={saveControllerProfile}
+            />
+
+            <GraphicsSettingsPanel
+              selectedEmulator={selectedEmulator}
+              profiles={graphicsProfiles}
+              onSaveProfile={saveGraphicsProfile}
             />
 
             <LibraryPanel
@@ -1767,7 +1845,11 @@ export default function App() {
                     <div>
                       <div className="picker-title-row">
                         <strong>{emu.name}</strong>
-                        <ResourceIndicators summary={resourceSummary} />
+                        <ResourceIndicators
+                          summary={resourceSummary}
+                          onImportResource={importLocalResourceForEmulator}
+                          importingResourceKey={resourceImportingKey}
+                        />
                       </div>
                       <p>{emu.platformLabel}</p>
                       {resourceSummary?.requirements.length ? (
@@ -1852,9 +1934,7 @@ export default function App() {
                   {checkingAppUpdate
                     ? "Checking..."
                     : appUpdateStatus?.updateAvailable
-                      ? appUpdateSkipped
-                        ? "Skipped"
-                        : "Update available"
+                      ? "Update available"
                       : appUpdateStatus
                         ? "Up to date"
                         : "Not checked"}
@@ -1892,13 +1972,6 @@ export default function App() {
                 onClick={() => void checkForAppUpdate(paths.root, configRef.current, { manual: true })}
               >
                 {checkingAppUpdate ? "Checking..." : "Check for updates"}
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!appUpdateStatus?.updateAvailable || appUpdateSkipped || isAppUpdateBusy}
-                onClick={() => void skipAppUpdateVersion()}
-              >
-                Skip version
               </button>
               <button
                 className="primary-button"
@@ -1960,16 +2033,9 @@ export default function App() {
               </div>
             ) : null}
 
-            <div className="confirmation-actions save-conflict-actions">
+            <div className="confirmation-actions">
               <button className="ghost-button" disabled={isAppUpdateBusy} onClick={closeAppUpdatePrompt}>
                 Remind me later
-              </button>
-              <button
-                className="ghost-button"
-                disabled={isAppUpdateBusy}
-                onClick={() => void skipAppUpdateVersion()}
-              >
-                Skip version
               </button>
               <button
                 className="primary-button"
@@ -2209,23 +2275,61 @@ function formatConflictIsoTimestamp(value?: string | null): string {
   });
 }
 
-function ResourceIndicators({ summary }: { summary?: EmulatorResourceSummary }) {
+interface ResourceIndicatorsProps {
+  summary?: EmulatorResourceSummary;
+  onImportResource?: (emulatorId: string, resourceId: string) => void;
+  importingResourceKey?: string | null;
+}
+
+function ResourceIndicators({
+  summary,
+  onImportResource,
+  importingResourceKey
+}: ResourceIndicatorsProps) {
   if (!summary?.requirements.length) {
     return null;
   }
 
   return (
     <span className="resource-indicators" aria-label={formatResourceSummaryLine(summary)}>
-      {summary.statuses.map((status) => (
-        <span
-          key={status.id}
-          className={`resource-dot resource-dot-${status.state}`}
-          title={`${status.label}: ${status.message}`}
-          aria-label={`${status.label}: ${status.state}`}
-        >
-          {resourceDotLabel(status.kind)}
-        </span>
-      ))}
+      {summary.statuses.map((status) => {
+        const isImporting =
+          importingResourceKey === resourceProgressKey(summary.emulatorId, status.id);
+        const className = `resource-dot resource-dot-${status.state} ${
+          onImportResource ? "resource-dot-action" : ""
+        }`;
+        const label = resourceDotLabel(status.kind);
+
+        if (!onImportResource) {
+          return (
+            <span
+              key={status.id}
+              className={className}
+              title={`${status.label}: ${status.message}`}
+              aria-label={`${status.label}: ${status.state}`}
+            >
+              {label}
+            </span>
+          );
+        }
+
+        return (
+          <button
+            key={status.id}
+            className={className}
+            type="button"
+            title={`Import ${status.label}: ${status.message}`}
+            aria-label={`Import ${status.label} for ${summary.emulatorName}`}
+            disabled={Boolean(importingResourceKey)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onImportResource(summary.emulatorId, status.id);
+            }}
+          >
+            {isImporting ? <span className="resource-dot-spinner" aria-hidden="true" /> : label}
+          </button>
+        );
+      })}
     </span>
   );
 }

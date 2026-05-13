@@ -14,10 +14,16 @@ pub struct ConfigureResult {
     pub wii_saves_directory: String,
 }
 
-pub fn configure_emulator(paths: &PortablePaths, emulator_id: &str) -> Result<ConfigureResult, String> {
+pub fn configure_emulator(
+    paths: &PortablePaths,
+    emulator_id: &str,
+) -> Result<ConfigureResult, String> {
     match emulator_id {
         "dolphin" => configure_dolphin(paths),
-        _ => Err(format!("Configuration non implémentée pour {}", emulator_id)),
+        _ => Err(format!(
+            "Configuration non implémentée pour {}",
+            emulator_id
+        )),
     }
 }
 
@@ -91,9 +97,7 @@ fn write_dolphin_ini(path: &Path, portable_paths: &PortablePaths) -> Result<(), 
             "; Saves={}\n",
             "; Firmware={}\n"
         ),
-        portable_paths.roms,
-        portable_paths.saves,
-        portable_paths.firmware
+        portable_paths.roms, portable_paths.saves, portable_paths.firmware
     );
 
     fs::write(path, content).map_err(|error| format!("Impossible d'écrire Dolphin.ini: {}", error))
