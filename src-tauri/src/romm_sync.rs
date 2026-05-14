@@ -1,7 +1,7 @@
-use crate::emulator_configurator::configure_emulator;
 use crate::controller_profile_writer::{
     apply_saved_controller_profile_for_rom, apply_saved_controller_profile_for_rom_to_user_dir,
 };
+use crate::emulator_configurator::configure_emulator;
 use crate::portable_paths::PortablePaths;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -155,7 +155,11 @@ pub fn register_rom_mapping(
 
     let mut index = load_rom_index(paths)?;
 
-    if let Some(existing) = index.entries.iter_mut().find(|entry| entry.rom_path == rom_path) {
+    if let Some(existing) = index
+        .entries
+        .iter_mut()
+        .find(|entry| entry.rom_path == rom_path)
+    {
         existing.romm_id = romm_id.to_string();
         existing.platform_name = platform_name.map(str::to_string);
         existing.file_name = file_name.map(str::to_string);
@@ -182,15 +186,29 @@ pub fn get_save_sync_statuses(
     Ok(rom_paths
         .iter()
         .map(|rom_path| {
-            let mapping = index.entries.iter().find(|entry| entry.rom_path == *rom_path);
-            let emulator_id = crate::platform_router::resolve_emulator_id_for_rom_path(paths, rom_path)
-                .unwrap_or_else(|_| "unknown".to_string());
+            let mapping = index
+                .entries
+                .iter()
+                .find(|entry| entry.rom_path == *rom_path);
+            let emulator_id =
+                crate::platform_router::resolve_emulator_id_for_rom_path(paths, rom_path)
+                    .unwrap_or_else(|_| "unknown".to_string());
             let local_save_updated_at_ms = match emulator_id.as_str() {
-                "dolphin" => latest_dolphin_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
-                "melonds" => latest_melonds_save_timestamp_ms(Path::new(rom_path)).ok().flatten(),
-                "azahar" => latest_azahar_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
-                "eden" => latest_eden_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
-                "pcsx2" => latest_pcsx2_save_timestamp_ms(paths, Path::new(rom_path)).ok().flatten(),
+                "dolphin" => latest_dolphin_save_timestamp_ms(paths, Path::new(rom_path))
+                    .ok()
+                    .flatten(),
+                "melonds" => latest_melonds_save_timestamp_ms(Path::new(rom_path))
+                    .ok()
+                    .flatten(),
+                "azahar" => latest_azahar_save_timestamp_ms(paths, Path::new(rom_path))
+                    .ok()
+                    .flatten(),
+                "eden" => latest_eden_save_timestamp_ms(paths, Path::new(rom_path))
+                    .ok()
+                    .flatten(),
+                "pcsx2" => latest_pcsx2_save_timestamp_ms(paths, Path::new(rom_path))
+                    .ok()
+                    .flatten(),
                 _ => None,
             };
 
@@ -200,7 +218,8 @@ pub fn get_save_sync_statuses(
                 emulator_id,
                 has_local_save: local_save_updated_at_ms.is_some(),
                 local_save_updated_at_ms,
-                last_known_remote_save_at: mapping.and_then(|entry| entry.last_remote_save_at.clone()),
+                last_known_remote_save_at: mapping
+                    .and_then(|entry| entry.last_remote_save_at.clone()),
             }
         })
         .collect())
@@ -235,13 +254,8 @@ pub fn get_save_conflict_status(
         return Ok(None);
     };
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        &mapping,
-        remote_emulator_id,
-        slot_name,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, &mapping, remote_emulator_id, slot_name)?;
     let Some(save) = latest_save else {
         return Ok(None);
     };
@@ -266,7 +280,11 @@ pub fn launch_dolphin(
         &format!(
             "launch_dolphin rom_path={} mode={}",
             rom_path.to_string_lossy(),
-            if session.is_some() { "online" } else { "offline" }
+            if session.is_some() {
+                "online"
+            } else {
+                "offline"
+            }
         ),
     );
 
@@ -309,7 +327,13 @@ pub fn launch_dolphin(
     cleanup_dolphin_transient_files(paths, &profile_user_dir)?;
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        maybe_restore_latest_remote_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        maybe_restore_latest_remote_save(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
         cleanup_dolphin_transient_files(paths, &profile_user_dir)?;
     } else {
         log_sync(paths, "launching Dolphin with local profile only");
@@ -320,8 +344,7 @@ pub fn launch_dolphin(
         "dolphin",
         &profile_user_dir,
         Some(rom_path),
-    )?
-    {
+    )? {
         log_sync(
             paths,
             &format!(
@@ -350,17 +373,33 @@ pub fn launch_dolphin(
 
     log_sync(
         paths,
-        &format!("dolphin exited success={} code={:?}", status.success(), status.code()),
+        &format!(
+            "dolphin exited success={} code={:?}",
+            status.success(),
+            status.code()
+        ),
     );
 
     if !status.success() {
-        return Err(format!("Dolphin s'est fermé avec le code {:?}", status.code()));
+        return Err(format!(
+            "Dolphin s'est fermé avec le code {:?}",
+            status.code()
+        ));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        upload_save_bundle(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        upload_save_bundle(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
     } else {
-        log_sync(paths, "skip remote upload because no active RomM session or no mapping");
+        log_sync(
+            paths,
+            "skip remote upload because no active RomM session or no mapping",
+        );
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -403,7 +442,10 @@ fn launch_plain_dolphin(
         .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
     if !status.success() {
-        return Err(format!("Dolphin s'est ferme avec le code {:?}", status.code()));
+        return Err(format!(
+            "Dolphin s'est ferme avec le code {:?}",
+            status.code()
+        ));
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -425,7 +467,11 @@ pub fn launch_melonds(
         &format!(
             "launch_melonds rom_path={} mode={}",
             rom_path.to_string_lossy(),
-            if session.is_some() { "online" } else { "offline" }
+            if session.is_some() {
+                "online"
+            } else {
+                "offline"
+            }
         ),
     );
 
@@ -485,17 +531,27 @@ pub fn launch_melonds(
 
     log_sync(
         paths,
-        &format!("melonds exited success={} code={:?}", status.success(), status.code()),
+        &format!(
+            "melonds exited success={} code={:?}",
+            status.success(),
+            status.code()
+        ),
     );
 
     if !status.success() {
-        return Err(format!("melonDS s'est ferme avec le code {:?}", status.code()));
+        return Err(format!(
+            "melonDS s'est ferme avec le code {:?}",
+            status.code()
+        ));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
         upload_melonds_save_bundle(paths, active_session, current_mapping, rom_path)?;
     } else {
-        log_sync(paths, "skip melonDS remote upload because no active RomM session or no mapping");
+        log_sync(
+            paths,
+            "skip melonDS remote upload because no active RomM session or no mapping",
+        );
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -518,7 +574,11 @@ pub fn launch_azahar(
             "launch_azahar rom_path={} executable={} mode={}",
             rom_path.to_string_lossy(),
             executable_path.to_string_lossy(),
-            if session.is_some() { "online" } else { "offline" }
+            if session.is_some() {
+                "online"
+            } else {
+                "offline"
+            }
         ),
     );
 
@@ -656,16 +716,23 @@ pub fn launch_azahar(
             log_sync(paths, "no Azahar controller profile configured");
         }
         Err(error) => {
-            log_sync(paths, &format!("Azahar controller profile apply failed: {}", error));
+            log_sync(
+                paths,
+                &format!("Azahar controller profile apply failed: {}", error),
+            );
             return Err(error);
         }
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
         log_sync(paths, "Azahar step: maybe restore latest remote save");
-        if let Err(error) =
-            maybe_restore_latest_azahar_save(paths, active_session, current_mapping, rom_path, &profile_root)
-        {
+        if let Err(error) = maybe_restore_latest_azahar_save(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        ) {
             log_sync(paths, &format!("Azahar remote restore failed: {}", error));
             return Err(error);
         }
@@ -689,7 +756,10 @@ pub fn launch_azahar(
 
     log_sync(paths, "Azahar step: materialize portable user");
     if let Err(error) = materialize_azahar_portable_user(paths, &profile_root, &portable_user_dir) {
-        log_sync(paths, &format!("Azahar materialize portable user failed: {}", error));
+        log_sync(
+            paths,
+            &format!("Azahar materialize portable user failed: {}", error),
+        );
         return Err(error);
     }
 
@@ -718,62 +788,60 @@ pub fn launch_azahar(
     let session_for_wait = session.cloned();
     let mapping_for_wait = mapping.clone();
 
-    thread::spawn(move || {
-        match child.wait() {
-            Ok(status) => {
+    thread::spawn(move || match child.wait() {
+        Ok(status) => {
+            log_sync(
+                &paths_for_wait,
+                &format!(
+                    "azahar exited success={} code={:?}",
+                    status.success(),
+                    status.code()
+                ),
+            );
+            log_sync(&paths_for_wait, "Azahar step: sync portable user back");
+            if let Err(error) = sync_azahar_portable_user_back(
+                &paths_for_wait,
+                &portable_user_dir_for_wait,
+                &profile_root_for_wait,
+            ) {
                 log_sync(
                     &paths_for_wait,
-                    &format!(
-                        "azahar exited success={} code={:?}",
-                        status.success(),
-                        status.code()
-                    ),
+                    &format!("Azahar sync portable user back failed: {}", error),
                 );
-                log_sync(&paths_for_wait, "Azahar step: sync portable user back");
-                if let Err(error) = sync_azahar_portable_user_back(
+                return;
+            }
+
+            if !status.success() {
+                log_sync(
                     &paths_for_wait,
-                    &portable_user_dir_for_wait,
+                    &format!("Azahar exited with failing status code={:?}", status.code()),
+                );
+                return;
+            }
+
+            if let (Some(active_session), Some(current_mapping)) =
+                (session_for_wait.as_ref(), mapping_for_wait.as_ref())
+            {
+                if let Err(error) = upload_azahar_save_bundle(
+                    &paths_for_wait,
+                    active_session,
+                    current_mapping,
+                    &rom_path_for_wait,
                     &profile_root_for_wait,
                 ) {
                     log_sync(
                         &paths_for_wait,
-                        &format!("Azahar sync portable user back failed: {}", error),
-                    );
-                    return;
-                }
-
-                if !status.success() {
-                    log_sync(
-                        &paths_for_wait,
-                        &format!("Azahar exited with failing status code={:?}", status.code()),
-                    );
-                    return;
-                }
-
-                if let (Some(active_session), Some(current_mapping)) =
-                    (session_for_wait.as_ref(), mapping_for_wait.as_ref())
-                {
-                    if let Err(error) = upload_azahar_save_bundle(
-                        &paths_for_wait,
-                        active_session,
-                        current_mapping,
-                        &rom_path_for_wait,
-                        &profile_root_for_wait,
-                    ) {
-                        log_sync(
-                            &paths_for_wait,
-                            &format!("Azahar remote upload failed: {}", error),
-                        );
-                    }
-                } else {
-                    log_sync(
-                        &paths_for_wait,
-                        "skip Azahar remote upload because no active RomM session or no mapping",
+                        &format!("Azahar remote upload failed: {}", error),
                     );
                 }
+            } else {
+                log_sync(
+                    &paths_for_wait,
+                    "skip Azahar remote upload because no active RomM session or no mapping",
+                );
             }
-            Err(error) => log_sync(&paths_for_wait, &format!("Azahar wait failed: {}", error)),
         }
+        Err(error) => log_sync(&paths_for_wait, &format!("Azahar wait failed: {}", error)),
     });
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -795,7 +863,11 @@ pub fn launch_eden(
         &format!(
             "launch_eden rom_path={} mode={}",
             rom_path.to_string_lossy(),
-            if session.is_some() { "online" } else { "offline" }
+            if session.is_some() {
+                "online"
+            } else {
+                "offline"
+            }
         ),
     );
 
@@ -870,7 +942,13 @@ pub fn launch_eden(
     seed_eden_profile_from_base_user(paths, &profile_root)?;
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        maybe_restore_latest_eden_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        maybe_restore_latest_eden_save(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
     } else {
         log_sync(paths, "launching Eden with local profile only");
     }
@@ -880,8 +958,7 @@ pub fn launch_eden(
         "eden",
         &profile_root,
         Some(rom_path),
-    )?
-    {
+    )? {
         log_sync(
             paths,
             &format!(
@@ -911,7 +988,11 @@ pub fn launch_eden(
 
     log_sync(
         paths,
-        &format!("eden exited success={} code={:?}", status.success(), status.code()),
+        &format!(
+            "eden exited success={} code={:?}",
+            status.success(),
+            status.code()
+        ),
     );
 
     sync_eden_portable_user_back(paths, &portable_user_dir, &profile_root)?;
@@ -921,9 +1002,18 @@ pub fn launch_eden(
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        upload_eden_save_bundle(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        upload_eden_save_bundle(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
     } else {
-        log_sync(paths, "skip Eden remote upload because no active RomM session or no mapping");
+        log_sync(
+            paths,
+            "skip Eden remote upload because no active RomM session or no mapping",
+        );
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -945,7 +1035,11 @@ pub fn launch_pcsx2(
         &format!(
             "launch_pcsx2 rom_path={} mode={}",
             rom_path.to_string_lossy(),
-            if session.is_some() { "online" } else { "offline" }
+            if session.is_some() {
+                "online"
+            } else {
+                "offline"
+            }
         ),
     );
 
@@ -990,8 +1084,7 @@ pub fn launch_pcsx2(
             "pcsx2",
             &working_directory,
             Some(rom_path),
-        )?
-        {
+        )? {
             log_sync(
                 paths,
                 &format!(
@@ -1012,7 +1105,10 @@ pub fn launch_pcsx2(
             .map_err(|error| format!("Lancement du jeu impossible: {}", error))?;
 
         if !status.success() {
-            return Err(format!("PCSX2 s'est ferme avec le code {:?}", status.code()));
+            return Err(format!(
+                "PCSX2 s'est ferme avec le code {:?}",
+                status.code()
+            ));
         }
 
         return Ok(crate::game_launcher::GameLaunchResult {
@@ -1026,7 +1122,13 @@ pub fn launch_pcsx2(
     seed_pcsx2_profile_from_base(paths, &profile_root)?;
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        maybe_restore_latest_pcsx2_save(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        maybe_restore_latest_pcsx2_save(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
     } else {
         log_sync(paths, "launching PCSX2 with local profile only");
     }
@@ -1045,8 +1147,7 @@ pub fn launch_pcsx2(
         "pcsx2",
         &working_directory,
         Some(rom_path),
-    )?
-    {
+    )? {
         log_sync(
             paths,
             &format!(
@@ -1068,19 +1169,35 @@ pub fn launch_pcsx2(
 
     log_sync(
         paths,
-        &format!("pcsx2 exited success={} code={:?}", status.success(), status.code()),
+        &format!(
+            "pcsx2 exited success={} code={:?}",
+            status.success(),
+            status.code()
+        ),
     );
 
     sync_pcsx2_portable_profile_back(paths, &working_directory, &profile_root)?;
 
     if !status.success() {
-        return Err(format!("PCSX2 s'est ferme avec le code {:?}", status.code()));
+        return Err(format!(
+            "PCSX2 s'est ferme avec le code {:?}",
+            status.code()
+        ));
     }
 
     if let (Some(active_session), Some(current_mapping)) = (session, mapping.as_ref()) {
-        upload_pcsx2_save_bundle(paths, active_session, current_mapping, rom_path, &profile_root)?;
+        upload_pcsx2_save_bundle(
+            paths,
+            active_session,
+            current_mapping,
+            rom_path,
+            &profile_root,
+        )?;
     } else {
-        log_sync(paths, "skip PCSX2 remote upload because no active RomM session or no mapping");
+        log_sync(
+            paths,
+            "skip PCSX2 remote upload because no active RomM session or no mapping",
+        );
     }
 
     Ok(crate::game_launcher::GameLaunchResult {
@@ -1098,24 +1215,30 @@ fn maybe_restore_latest_remote_save(
     rom_path: &Path,
     profile_root: &Path,
 ) -> Result<(), String> {
-    log_sync(paths, &format!("restore_latest_save_bundle romm_id={}", mapping.romm_id));
+    log_sync(
+        paths,
+        &format!("restore_latest_save_bundle romm_id={}", mapping.romm_id),
+    );
 
     let local_timestamp = latest_dolphin_save_timestamp_ms(paths, rom_path)?;
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        mapping,
-        "dolphin",
-        DOLPHIN_SLOT_NAME,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, mapping, "dolphin", DOLPHIN_SLOT_NAME)?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote save bundle found");
         return Ok(());
     };
 
-    if !should_restore_remote_save(paths, session, mapping, "dolphin", DOLPHIN_SLOT_NAME, local_timestamp, &save)? {
+    if !should_restore_remote_save(
+        paths,
+        session,
+        mapping,
+        "dolphin",
+        DOLPHIN_SLOT_NAME,
+        local_timestamp,
+        &save,
+    )? {
         return Ok(());
     }
 
@@ -1161,7 +1284,10 @@ fn maybe_restore_latest_remote_save(
 
     log_sync(
         paths,
-        &format!("remote save extracted into {}", profile_root.to_string_lossy()),
+        &format!(
+            "remote save extracted into {}",
+            profile_root.to_string_lossy()
+        ),
     );
 
     Ok(())
@@ -1175,7 +1301,10 @@ fn upload_save_bundle(
 ) -> Result<(), String> {
     let user_dir = profile_root.join("User");
     if !user_dir.exists() {
-        log_sync(paths, "upload skipped because profile User directory does not exist");
+        log_sync(
+            paths,
+            "upload skipped because profile User directory does not exist",
+        );
         return Ok(());
     }
 
@@ -1183,8 +1312,11 @@ fn upload_save_bundle(
     let sync_paths = dolphin_sync_paths(profile_root);
     create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
 
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", &mapping.romm_id)
         .append_pair("emulator", "dolphin")
@@ -1238,7 +1370,10 @@ fn upload_save_bundle(
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM echoue avec le statut {}: {}", status, response_body));
+        return Err(format!(
+            "Upload RomM echoue avec le statut {}: {}",
+            status, response_body
+        ));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1251,7 +1386,13 @@ fn upload_save_bundle(
         uploaded_save.and_then(|save| save.updated_at),
     )?;
 
-    cleanup_old_remote_saves(paths, session, &mapping.romm_id, "dolphin", DOLPHIN_SLOT_NAME)?;
+    cleanup_old_remote_saves(
+        paths,
+        session,
+        &mapping.romm_id,
+        "dolphin",
+        DOLPHIN_SLOT_NAME,
+    )?;
     Ok(())
 }
 fn maybe_restore_latest_melonds_save(
@@ -1260,24 +1401,30 @@ fn maybe_restore_latest_melonds_save(
     mapping: &RommRomMapping,
     rom_path: &Path,
 ) -> Result<(), String> {
-    log_sync(paths, &format!("restore_latest_melonds_save romm_id={}", mapping.romm_id));
+    log_sync(
+        paths,
+        &format!("restore_latest_melonds_save romm_id={}", mapping.romm_id),
+    );
 
     let local_timestamp = latest_melonds_save_timestamp_ms(rom_path)?;
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        mapping,
-        "melonds",
-        MELONDS_SLOT_NAME,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, mapping, "melonds", MELONDS_SLOT_NAME)?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote melonDS save bundle found");
         return Ok(());
     };
 
-    if !should_restore_remote_save(paths, session, mapping, "melonds", MELONDS_SLOT_NAME, local_timestamp, &save)? {
+    if !should_restore_remote_save(
+        paths,
+        session,
+        mapping,
+        "melonds",
+        MELONDS_SLOT_NAME,
+        local_timestamp,
+        &save,
+    )? {
         return Ok(());
     }
 
@@ -1309,7 +1456,10 @@ fn maybe_restore_latest_melonds_save(
     let archive_path = temp_dir.join(&archive_name);
     download_file(paths, session, &download_url, &archive_path)?;
     remove_melonds_local_save_files(rom_path)?;
-    extract_zip_archive(&archive_path, rom_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    extract_zip_archive(
+        &archive_path,
+        rom_path.parent().unwrap_or_else(|| Path::new(".")),
+    )?;
     let _ = fs::remove_file(&archive_path);
 
     let latest_local_after_restore = latest_melonds_save_timestamp_ms(rom_path)?;
@@ -1322,7 +1472,10 @@ fn maybe_restore_latest_melonds_save(
 
     log_sync(
         paths,
-        &format!("melonDS remote save extracted next to {}", rom_path.to_string_lossy()),
+        &format!(
+            "melonDS remote save extracted next to {}",
+            rom_path.to_string_lossy()
+        ),
     );
 
     Ok(())
@@ -1336,7 +1489,10 @@ fn upload_melonds_save_bundle(
 ) -> Result<(), String> {
     let save_files = collect_melonds_save_files(rom_path)?;
     if save_files.is_empty() {
-        log_sync(paths, "melonDS upload skipped because no local save files were found");
+        log_sync(
+            paths,
+            "melonDS upload skipped because no local save files were found",
+        );
         return Ok(());
     }
 
@@ -1347,8 +1503,11 @@ fn upload_melonds_save_bundle(
     let archive_path = cache_root.join("emumanager-melonds-sync.zip");
     create_zip_archive_from_files(&save_files, &archive_path)?;
 
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", &mapping.romm_id)
         .append_pair("emulator", "melonds")
@@ -1398,11 +1557,17 @@ fn upload_melonds_save_bundle(
 
     log_sync(
         paths,
-        &format!("melonDS upload response status={} body={}", status, response_body),
+        &format!(
+            "melonDS upload response status={} body={}",
+            status, response_body
+        ),
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM melonDS echoue avec le statut {}: {}", status, response_body));
+        return Err(format!(
+            "Upload RomM melonDS echoue avec le statut {}: {}",
+            status, response_body
+        ));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1415,7 +1580,13 @@ fn upload_melonds_save_bundle(
         uploaded_save.and_then(|save| save.updated_at),
     )?;
 
-    cleanup_old_remote_saves(paths, session, &mapping.romm_id, "melonds", MELONDS_SLOT_NAME)?;
+    cleanup_old_remote_saves(
+        paths,
+        session,
+        &mapping.romm_id,
+        "melonds",
+        MELONDS_SLOT_NAME,
+    )?;
     Ok(())
 }
 
@@ -1426,24 +1597,30 @@ fn maybe_restore_latest_azahar_save(
     rom_path: &Path,
     profile_root: &Path,
 ) -> Result<(), String> {
-    log_sync(paths, &format!("restore_latest_azahar_save romm_id={}", mapping.romm_id));
+    log_sync(
+        paths,
+        &format!("restore_latest_azahar_save romm_id={}", mapping.romm_id),
+    );
 
     let local_timestamp = latest_azahar_save_timestamp_ms(paths, rom_path)?;
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        mapping,
-        "azahar",
-        AZAHAR_SLOT_NAME,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, mapping, "azahar", AZAHAR_SLOT_NAME)?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote Azahar save bundle found");
         return Ok(());
     };
 
-    if !should_restore_remote_save(paths, session, mapping, "azahar", AZAHAR_SLOT_NAME, local_timestamp, &save)? {
+    if !should_restore_remote_save(
+        paths,
+        session,
+        mapping,
+        "azahar",
+        AZAHAR_SLOT_NAME,
+        local_timestamp,
+        &save,
+    )? {
         return Ok(());
     }
 
@@ -1491,7 +1668,10 @@ fn maybe_restore_latest_azahar_save(
 
     log_sync(
         paths,
-        &format!("Azahar remote save extracted into {}", profile_root.to_string_lossy()),
+        &format!(
+            "Azahar remote save extracted into {}",
+            profile_root.to_string_lossy()
+        ),
     );
 
     Ok(())
@@ -1505,15 +1685,21 @@ fn upload_azahar_save_bundle(
     profile_root: &Path,
 ) -> Result<(), String> {
     if !profile_root.exists() {
-        log_sync(paths, "Azahar upload skipped because profile directory does not exist");
+        log_sync(
+            paths,
+            "Azahar upload skipped because profile directory does not exist",
+        );
         return Ok(());
     }
 
     let archive_path = profile_root.join("emumanager-azahar-sync.zip");
     create_zip_archive(profile_root, &archive_path)?;
 
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", &mapping.romm_id)
         .append_pair("emulator", "azahar")
@@ -1563,11 +1749,17 @@ fn upload_azahar_save_bundle(
 
     log_sync(
         paths,
-        &format!("Azahar upload response status={} body={}", status, response_body),
+        &format!(
+            "Azahar upload response status={} body={}",
+            status, response_body
+        ),
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM Azahar echoue avec le statut {}: {}", status, response_body));
+        return Err(format!(
+            "Upload RomM Azahar echoue avec le statut {}: {}",
+            status, response_body
+        ));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1591,24 +1783,30 @@ fn maybe_restore_latest_eden_save(
     rom_path: &Path,
     profile_root: &Path,
 ) -> Result<(), String> {
-    log_sync(paths, &format!("restore_latest_eden_save romm_id={}", mapping.romm_id));
+    log_sync(
+        paths,
+        &format!("restore_latest_eden_save romm_id={}", mapping.romm_id),
+    );
 
     let local_timestamp = latest_eden_save_timestamp_ms(paths, rom_path)?;
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        mapping,
-        "eden",
-        EDEN_SLOT_NAME,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, mapping, "eden", EDEN_SLOT_NAME)?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote Eden save bundle found");
         return Ok(());
     };
 
-    if !should_restore_remote_save(paths, session, mapping, "eden", EDEN_SLOT_NAME, local_timestamp, &save)? {
+    if !should_restore_remote_save(
+        paths,
+        session,
+        mapping,
+        "eden",
+        EDEN_SLOT_NAME,
+        local_timestamp,
+        &save,
+    )? {
         return Ok(());
     }
 
@@ -1655,7 +1853,10 @@ fn maybe_restore_latest_eden_save(
 
     log_sync(
         paths,
-        &format!("Eden remote save extracted into {}", profile_root.to_string_lossy()),
+        &format!(
+            "Eden remote save extracted into {}",
+            profile_root.to_string_lossy()
+        ),
     );
 
     Ok(())
@@ -1669,21 +1870,30 @@ fn upload_eden_save_bundle(
     profile_root: &Path,
 ) -> Result<(), String> {
     if !profile_root.exists() {
-        log_sync(paths, "Eden upload skipped because profile directory does not exist");
+        log_sync(
+            paths,
+            "Eden upload skipped because profile directory does not exist",
+        );
         return Ok(());
     }
 
     let sync_paths = eden_sync_paths(profile_root);
     if !sync_paths.iter().any(|path| path.exists()) {
-        log_sync(paths, "Eden upload skipped because no selected save paths were found");
+        log_sync(
+            paths,
+            "Eden upload skipped because no selected save paths were found",
+        );
         return Ok(());
     }
 
     let archive_path = profile_root.join("emumanager-eden-sync.zip");
     create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
 
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", &mapping.romm_id)
         .append_pair("emulator", "eden")
@@ -1733,11 +1943,17 @@ fn upload_eden_save_bundle(
 
     log_sync(
         paths,
-        &format!("Eden upload response status={} body={}", status, response_body),
+        &format!(
+            "Eden upload response status={} body={}",
+            status, response_body
+        ),
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM Eden echoue avec le statut {}: {}", status, response_body));
+        return Err(format!(
+            "Upload RomM Eden echoue avec le statut {}: {}",
+            status, response_body
+        ));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1761,24 +1977,30 @@ fn maybe_restore_latest_pcsx2_save(
     rom_path: &Path,
     profile_root: &Path,
 ) -> Result<(), String> {
-    log_sync(paths, &format!("restore_latest_pcsx2_save romm_id={}", mapping.romm_id));
+    log_sync(
+        paths,
+        &format!("restore_latest_pcsx2_save romm_id={}", mapping.romm_id),
+    );
 
     let local_timestamp = latest_pcsx2_save_timestamp_ms(paths, rom_path)?;
 
-    let latest_save = fetch_latest_emumanager_save(
-        paths,
-        session,
-        mapping,
-        "pcsx2",
-        PCSX2_SLOT_NAME,
-    )?;
+    let latest_save =
+        fetch_latest_emumanager_save(paths, session, mapping, "pcsx2", PCSX2_SLOT_NAME)?;
 
     let Some(save) = latest_save else {
         log_sync(paths, "no remote PCSX2 save bundle found");
         return Ok(());
     };
 
-    if !should_restore_remote_save(paths, session, mapping, "pcsx2", PCSX2_SLOT_NAME, local_timestamp, &save)? {
+    if !should_restore_remote_save(
+        paths,
+        session,
+        mapping,
+        "pcsx2",
+        PCSX2_SLOT_NAME,
+        local_timestamp,
+        &save,
+    )? {
         return Ok(());
     }
 
@@ -1825,7 +2047,10 @@ fn maybe_restore_latest_pcsx2_save(
 
     log_sync(
         paths,
-        &format!("PCSX2 remote save extracted into {}", profile_root.to_string_lossy()),
+        &format!(
+            "PCSX2 remote save extracted into {}",
+            profile_root.to_string_lossy()
+        ),
     );
 
     Ok(())
@@ -1839,21 +2064,30 @@ fn upload_pcsx2_save_bundle(
     profile_root: &Path,
 ) -> Result<(), String> {
     if !profile_root.exists() {
-        log_sync(paths, "PCSX2 upload skipped because profile directory does not exist");
+        log_sync(
+            paths,
+            "PCSX2 upload skipped because profile directory does not exist",
+        );
         return Ok(());
     }
 
     let sync_paths = pcsx2_sync_paths(profile_root);
     if !sync_paths.iter().any(|path| path.exists()) {
-        log_sync(paths, "PCSX2 upload skipped because no selected save paths were found");
+        log_sync(
+            paths,
+            "PCSX2 upload skipped because no selected save paths were found",
+        );
         return Ok(());
     }
 
     let archive_path = profile_root.join("emumanager-pcsx2-sync.zip");
     create_zip_archive_from_paths(profile_root, &sync_paths, &archive_path)?;
 
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", &mapping.romm_id)
         .append_pair("emulator", "pcsx2")
@@ -1903,11 +2137,17 @@ fn upload_pcsx2_save_bundle(
 
     log_sync(
         paths,
-        &format!("PCSX2 upload response status={} body={}", status, response_body),
+        &format!(
+            "PCSX2 upload response status={} body={}",
+            status, response_body
+        ),
     );
 
     if !status.is_success() {
-        return Err(format!("Upload RomM PCSX2 echoue avec le statut {}: {}", status, response_body));
+        return Err(format!(
+            "Upload RomM PCSX2 echoue avec le statut {}: {}",
+            status, response_body
+        ));
     }
 
     let uploaded_save = serde_json::from_str::<RommSaveEntry>(&response_body).ok();
@@ -1931,9 +2171,11 @@ fn fetch_latest_emumanager_save(
     emulator_id: &str,
     slot_name: &str,
 ) -> Result<Option<RommSaveEntry>, String> {
-    Ok(fetch_emumanager_saves(paths, session, &mapping.romm_id, emulator_id, slot_name)?
-        .into_iter()
-        .max_by(|left, right| left.updated_at.cmp(&right.updated_at)))
+    Ok(
+        fetch_emumanager_saves(paths, session, &mapping.romm_id, emulator_id, slot_name)?
+            .into_iter()
+            .max_by(|left, right| left.updated_at.cmp(&right.updated_at)),
+    )
 }
 
 fn should_restore_remote_save(
@@ -1990,7 +2232,8 @@ fn should_restore_remote_save(
         }
     }
 
-    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some() {
+    if mapping.last_remote_save_at.as_ref() == save.updated_at.as_ref() && local_timestamp.is_some()
+    {
         log_sync(
             paths,
             &format!(
@@ -2030,10 +2273,7 @@ fn build_save_conflict_status(
     })
 }
 
-fn local_save_changed_since_sync(
-    local_timestamp: Option<u64>,
-    mapping: &RommRomMapping,
-) -> bool {
+fn local_save_changed_since_sync(local_timestamp: Option<u64>, mapping: &RommRomMapping) -> bool {
     let Some(local_timestamp) = local_timestamp else {
         return false;
     };
@@ -2092,7 +2332,11 @@ fn cleanup_old_remote_saves(
     if saves.len() <= MAX_REMOTE_SAVES {
         log_sync(
             paths,
-            &format!("remote save cleanup skipped count={} limit={}", saves.len(), MAX_REMOTE_SAVES),
+            &format!(
+                "remote save cleanup skipped count={} limit={}",
+                saves.len(),
+                MAX_REMOTE_SAVES
+            ),
         );
         return Ok(());
     }
@@ -2113,12 +2357,18 @@ fn cleanup_old_remote_saves(
         "{{\"saves\":[{}]}}",
         ids_to_delete
             .iter()
-            .map(|id| id.parse::<i64>().map(|numeric| numeric.to_string()).unwrap_or_else(|_| "0".to_string()))
+            .map(|id| id
+                .parse::<i64>()
+                .map(|numeric| numeric.to_string())
+                .unwrap_or_else(|_| "0".to_string()))
             .collect::<Vec<_>>()
             .join(",")
     );
 
-    let url = format!("{}/api/saves/delete", session.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/saves/delete",
+        session.base_url.trim_end_matches('/')
+    );
     let response = block_on(async {
         let client = build_http_client()?;
         client
@@ -2138,7 +2388,10 @@ fn cleanup_old_remote_saves(
             .await
             .unwrap_or_else(|_| "<unreadable body>".to_string())
     });
-    log_sync(paths, &format!("cleanup response status={} body={}", status, body));
+    log_sync(
+        paths,
+        &format!("cleanup response status={} body={}", status, body),
+    );
 
     if !status.is_success() {
         return Err(format!(
@@ -2157,8 +2410,11 @@ fn fetch_emumanager_saves(
     emulator_id: &str,
     slot_name: &str,
 ) -> Result<Vec<RommSaveEntry>, String> {
-    let mut url = Url::parse(&format!("{}/api/saves", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/saves",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut()
         .append_pair("rom_id", romm_id)
         .append_pair("emulator", emulator_id)
@@ -2185,7 +2441,10 @@ fn fetch_emumanager_saves(
             .map_err(|error| format!("Réponse RomM illisible pour les saves: {}", error))
     })?;
 
-    log_sync(paths, &format!("fetch saves status={} body={}", status, raw));
+    log_sync(
+        paths,
+        &format!("fetch saves status={} body={}", status, raw),
+    );
 
     if !status.is_success() {
         return Err(format!(
@@ -2208,13 +2467,19 @@ fn resolve_mapping_from_remote(
         .and_then(|value| value.to_str())
         .ok_or_else(|| "Nom de fichier ROM invalide".to_string())?;
 
-    let mut url = Url::parse(&format!("{}/api/roms", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/roms",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut().append_pair("search_term", file_name);
 
     log_sync(
         paths,
-        &format!("trying remote rom lookup for file_name={} url={}", file_name, url),
+        &format!(
+            "trying remote rom lookup for file_name={} url={}",
+            file_name, url
+        ),
     );
 
     let response = block_on(async {
@@ -2239,7 +2504,10 @@ fn resolve_mapping_from_remote(
     log_sync(paths, &format!("rom lookup status={} body={}", status, raw));
 
     if !status.is_success() {
-        return Err(format!("Recherche RomM échouée avec le statut {}: {}", status, raw));
+        return Err(format!(
+            "Recherche RomM échouée avec le statut {}: {}",
+            status, raw
+        ));
     }
 
     let payload = serde_json::from_str::<RommGamesResponse>(&raw)
@@ -2266,7 +2534,10 @@ fn resolve_mapping_from_remote(
             resolve_remote_game_file_names(game)
         ));
     }
-    log_sync(paths, &format!("rom lookup candidates={}", candidates.join(" | ")));
+    log_sync(
+        paths,
+        &format!("rom lookup candidates={}", candidates.join(" | ")),
+    );
 
     let mut matched = games.into_iter().find(|game| {
         let names = resolve_remote_game_file_names(game);
@@ -2678,10 +2949,7 @@ fn latest_pcsx2_save_timestamp_ms(
 }
 
 fn pcsx2_sync_paths(profile_root: &Path) -> Vec<PathBuf> {
-    vec![
-        profile_root.join("memcards"),
-        profile_root.join("sstates"),
-    ]
+    vec![profile_root.join("memcards"), profile_root.join("sstates")]
 }
 
 fn eden_sync_paths(profile_root: &Path) -> Vec<PathBuf> {
@@ -2711,11 +2979,20 @@ fn is_melonds_save_file_name(candidate_name: &str, rom_file_name: &str, rom_stem
 fn latest_modified_in_dir(directory: &Path) -> Result<Option<u64>, String> {
     let mut latest: Option<u64> = None;
 
-    for entry_result in fs::read_dir(directory)
-        .map_err(|error| format!("Impossible de lire {}: {}", directory.to_string_lossy(), error))?
-    {
-        let entry = entry_result
-            .map_err(|error| format!("Impossible de lire une entrée dans {}: {}", directory.to_string_lossy(), error))?;
+    for entry_result in fs::read_dir(directory).map_err(|error| {
+        format!(
+            "Impossible de lire {}: {}",
+            directory.to_string_lossy(),
+            error
+        )
+    })? {
+        let entry = entry_result.map_err(|error| {
+            format!(
+                "Impossible de lire une entrée dans {}: {}",
+                directory.to_string_lossy(),
+                error
+            )
+        })?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -2729,12 +3006,14 @@ fn latest_modified_in_dir(directory: &Path) -> Result<Option<u64>, String> {
             continue;
         }
 
-        let metadata = fs::metadata(&path)
-            .map_err(|error| format!("Impossible de lire les métadonnées de {}: {}", path.to_string_lossy(), error))?;
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(system_time_to_epoch_ms);
+        let metadata = fs::metadata(&path).map_err(|error| {
+            format!(
+                "Impossible de lire les métadonnées de {}: {}",
+                path.to_string_lossy(),
+                error
+            )
+        })?;
+        let modified = metadata.modified().ok().and_then(system_time_to_epoch_ms);
 
         latest = match (latest, modified) {
             (Some(left), Some(right)) => Some(left.max(right)),
@@ -2747,9 +3026,15 @@ fn latest_modified_in_dir(directory: &Path) -> Result<Option<u64>, String> {
     Ok(latest)
 }
 
-fn seed_profile_from_base_user(paths: &PortablePaths, profile_user_dir: &Path) -> Result<(), String> {
+fn seed_profile_from_base_user(
+    paths: &PortablePaths,
+    profile_user_dir: &Path,
+) -> Result<(), String> {
     if profile_user_dir.join("Config").exists() {
-        log_sync(paths, "profile already seeded, keeping existing User directory");
+        log_sync(
+            paths,
+            "profile already seeded, keeping existing User directory",
+        );
         return Ok(());
     }
 
@@ -2782,9 +3067,15 @@ fn seed_profile_from_base_user(paths: &PortablePaths, profile_user_dir: &Path) -
     Ok(())
 }
 
-fn seed_azahar_profile_from_base_user(paths: &PortablePaths, profile_root: &Path) -> Result<(), String> {
+fn seed_azahar_profile_from_base_user(
+    paths: &PortablePaths,
+    profile_root: &Path,
+) -> Result<(), String> {
     if profile_root.join("config").exists() || profile_root.join("sdmc").exists() {
-        log_sync(paths, "Azahar profile already seeded, keeping existing user directory");
+        log_sync(
+            paths,
+            "Azahar profile already seeded, keeping existing user directory",
+        );
         return Ok(());
     }
 
@@ -2806,8 +3097,9 @@ fn seed_azahar_profile_from_base_user(paths: &PortablePaths, profile_root: &Path
     for directory in ["config", "sdmc", "nand", "sysdata"] {
         let path = profile_root.join(directory);
         if !path.exists() {
-            fs::create_dir_all(&path)
-                .map_err(|error| format!("Impossible de creer {} pour Azahar: {}", directory, error))?;
+            fs::create_dir_all(&path).map_err(|error| {
+                format!("Impossible de creer {} pour Azahar: {}", directory, error)
+            })?;
         }
     }
 
@@ -2856,8 +3148,12 @@ fn materialize_azahar_portable_user(
     portable_user_dir: &Path,
 ) -> Result<(), String> {
     if portable_user_dir.exists() {
-        fs::remove_dir_all(portable_user_dir)
-            .map_err(|error| format!("Impossible de reinitialiser le dossier user Azahar: {}", error))?;
+        fs::remove_dir_all(portable_user_dir).map_err(|error| {
+            format!(
+                "Impossible de reinitialiser le dossier user Azahar: {}",
+                error
+            )
+        })?;
     }
 
     copy_directory_recursive(profile_root, portable_user_dir)?;
@@ -2878,7 +3174,10 @@ fn sync_azahar_portable_user_back(
     profile_root: &Path,
 ) -> Result<(), String> {
     if !portable_user_dir.exists() {
-        log_sync(paths, "Azahar portable user directory missing after launch, skipping local sync back");
+        log_sync(
+            paths,
+            "Azahar portable user directory missing after launch, skipping local sync back",
+        );
         return Ok(());
     }
 
@@ -2899,10 +3198,18 @@ fn sync_azahar_portable_user_back(
     Ok(())
 }
 
-fn seed_eden_profile_from_base_user(paths: &PortablePaths, profile_root: &Path) -> Result<(), String> {
-    if profile_root.join("config").exists() || profile_root.join("nand").exists() || profile_root.join("sdmc").exists()
+fn seed_eden_profile_from_base_user(
+    paths: &PortablePaths,
+    profile_root: &Path,
+) -> Result<(), String> {
+    if profile_root.join("config").exists()
+        || profile_root.join("nand").exists()
+        || profile_root.join("sdmc").exists()
     {
-        log_sync(paths, "Eden profile already seeded, keeping existing user directory");
+        log_sync(
+            paths,
+            "Eden profile already seeded, keeping existing user directory",
+        );
         return Ok(());
     }
 
@@ -2921,11 +3228,20 @@ fn seed_eden_profile_from_base_user(paths: &PortablePaths, profile_root: &Path) 
         );
     }
 
-    for directory in ["config", "nand", "sdmc", "keys", "load", "amiibo", "play_time"] {
+    for directory in [
+        "config",
+        "nand",
+        "sdmc",
+        "keys",
+        "load",
+        "amiibo",
+        "play_time",
+    ] {
         let path = profile_root.join(directory);
         if !path.exists() {
-            fs::create_dir_all(&path)
-                .map_err(|error| format!("Impossible de creer {} pour Eden: {}", directory, error))?;
+            fs::create_dir_all(&path).map_err(|error| {
+                format!("Impossible de creer {} pour Eden: {}", directory, error)
+            })?;
         }
     }
 
@@ -2944,8 +3260,12 @@ fn materialize_eden_portable_user(
     portable_user_dir: &Path,
 ) -> Result<(), String> {
     if portable_user_dir.exists() {
-        fs::remove_dir_all(portable_user_dir)
-            .map_err(|error| format!("Impossible de reinitialiser le dossier user Eden: {}", error))?;
+        fs::remove_dir_all(portable_user_dir).map_err(|error| {
+            format!(
+                "Impossible de reinitialiser le dossier user Eden: {}",
+                error
+            )
+        })?;
     }
 
     copy_directory_recursive(profile_root, portable_user_dir)?;
@@ -2966,7 +3286,10 @@ fn sync_eden_portable_user_back(
     profile_root: &Path,
 ) -> Result<(), String> {
     if !portable_user_dir.exists() {
-        log_sync(paths, "Eden portable user directory missing after launch, skipping local sync back");
+        log_sync(
+            paths,
+            "Eden portable user directory missing after launch, skipping local sync back",
+        );
         return Ok(());
     }
 
@@ -2989,7 +3312,10 @@ fn sync_eden_portable_user_back(
 
 fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> Result<(), String> {
     if profile_root.join("memcards").exists() || profile_root.join("sstates").exists() {
-        log_sync(paths, "PCSX2 profile already seeded, keeping existing save directories");
+        log_sync(
+            paths,
+            "PCSX2 profile already seeded, keeping existing save directories",
+        );
         return Ok(());
     }
 
@@ -3010,7 +3336,10 @@ fn seed_pcsx2_profile_from_base(paths: &PortablePaths, profile_root: &Path) -> R
 
     log_sync(
         paths,
-        &format!("seeded PCSX2 profile from {}", install_root.to_string_lossy()),
+        &format!(
+            "seeded PCSX2 profile from {}",
+            install_root.to_string_lossy()
+        ),
     );
     Ok(())
 }
@@ -3026,16 +3355,21 @@ fn materialize_pcsx2_portable_profile(
     working_directory: &Path,
 ) -> Result<(), String> {
     for path in pcsx2_sync_paths(profile_root) {
-        let relative = path.strip_prefix(profile_root).map_err(|error| {
-            format!("Chemin PCSX2 invalide dans le profil: {}", error)
-        })?;
+        let relative = path
+            .strip_prefix(profile_root)
+            .map_err(|error| format!("Chemin PCSX2 invalide dans le profil: {}", error))?;
         let destination = working_directory.join(relative);
         remove_path_if_exists(&destination)?;
         if path.exists() {
             copy_directory_recursive(&path, &destination)?;
         } else {
-            fs::create_dir_all(&destination)
-                .map_err(|error| format!("Impossible de creer {} pour PCSX2: {}", destination.to_string_lossy(), error))?;
+            fs::create_dir_all(&destination).map_err(|error| {
+                format!(
+                    "Impossible de creer {} pour PCSX2: {}",
+                    destination.to_string_lossy(),
+                    error
+                )
+            })?;
         }
     }
 
@@ -3084,11 +3418,21 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     }
 
     if path.is_dir() {
-        fs::remove_dir_all(path)
-            .map_err(|error| format!("Impossible de supprimer {}: {}", path.to_string_lossy(), error))?;
+        fs::remove_dir_all(path).map_err(|error| {
+            format!(
+                "Impossible de supprimer {}: {}",
+                path.to_string_lossy(),
+                error
+            )
+        })?;
     } else {
-        fs::remove_file(path)
-            .map_err(|error| format!("Impossible de supprimer {}: {}", path.to_string_lossy(), error))?;
+        fs::remove_file(path).map_err(|error| {
+            format!(
+                "Impossible de supprimer {}: {}",
+                path.to_string_lossy(),
+                error
+            )
+        })?;
     }
 
     Ok(())
@@ -3250,21 +3594,23 @@ fn add_directory_to_zip(
         if path.is_dir() {
             writer
                 .add_directory(format!("{}/", name), options)
-                .map_err(|error| format!("Impossible d'ajouter un dossier à l'archive: {}", error))?;
+                .map_err(|error| {
+                    format!("Impossible d'ajouter un dossier à l'archive: {}", error)
+                })?;
             add_directory_to_zip(writer, &path, base_dir, options)?;
         } else {
-            writer
-                .start_file(name, options)
-                .map_err(|error| format!("Impossible d'ajouter un fichier à l'archive: {}", error))?;
+            writer.start_file(name, options).map_err(|error| {
+                format!("Impossible d'ajouter un fichier à l'archive: {}", error)
+            })?;
 
             let mut file = fs::File::open(&path)
                 .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)
                 .map_err(|error| format!("Impossible de lire un fichier de save: {}", error))?;
-            writer
-                .write_all(&buffer)
-                .map_err(|error| format!("Impossible d'écrire un fichier dans l'archive: {}", error))?;
+            writer.write_all(&buffer).map_err(|error| {
+                format!("Impossible d'écrire un fichier dans l'archive: {}", error)
+            })?;
         }
     }
 
@@ -3274,11 +3620,15 @@ fn add_directory_to_zip(
 fn extract_zip_archive(archive_path: &Path, destination_dir: &Path) -> Result<(), String> {
     let file = fs::File::open(archive_path)
         .map_err(|error| format!("Impossible d'ouvrir l'archive de save: {}", error))?;
-    let mut archive = ZipArchive::new(file)
-        .map_err(|error| format!("Archive de save invalide: {}", error))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Archive de save invalide: {}", error))?;
 
-    fs::create_dir_all(destination_dir)
-        .map_err(|error| format!("Impossible de préparer le dossier de restauration: {}", error))?;
+    fs::create_dir_all(destination_dir).map_err(|error| {
+        format!(
+            "Impossible de préparer le dossier de restauration: {}",
+            error
+        )
+    })?;
 
     for index in 0..archive.len() {
         let mut entry = archive
@@ -3298,8 +3648,9 @@ fn extract_zip_archive(archive_path: &Path, destination_dir: &Path) -> Result<()
         }
 
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Impossible de préparer un dossier restauré: {}", error))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Impossible de préparer un dossier restauré: {}", error)
+            })?;
         }
 
         let mut output = fs::File::create(&output_path)
@@ -3330,8 +3681,13 @@ fn sanitize_zip_path(raw: &str) -> Option<PathBuf> {
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::create_dir_all(destination)
-        .map_err(|error| format!("Impossible de créer {}: {}", destination.to_string_lossy(), error))?;
+    fs::create_dir_all(destination).map_err(|error| {
+        format!(
+            "Impossible de créer {}: {}",
+            destination.to_string_lossy(),
+            error
+        )
+    })?;
 
     for entry_result in fs::read_dir(source)
         .map_err(|error| format!("Impossible de lire {}: {}", source.to_string_lossy(), error))?
@@ -3358,7 +3714,10 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Str
     Ok(())
 }
 
-fn cleanup_dolphin_transient_files(paths: &PortablePaths, profile_user_dir: &Path) -> Result<(), String> {
+fn cleanup_dolphin_transient_files(
+    paths: &PortablePaths,
+    profile_user_dir: &Path,
+) -> Result<(), String> {
     let transient_paths = [
         profile_user_dir.join("Wii").join("fst.bin"),
         profile_user_dir.join("Wii").join("fst.bin.tmp"),
@@ -3445,7 +3804,11 @@ fn update_mapping_sync_metadata(
 ) -> Result<(), String> {
     let mut index = load_rom_index(paths)?;
 
-    if let Some(entry) = index.entries.iter_mut().find(|entry| entry.rom_path == rom_path) {
+    if let Some(entry) = index
+        .entries
+        .iter_mut()
+        .find(|entry| entry.rom_path == rom_path)
+    {
         if let Some(local_value) = last_synced_local_save_at_ms {
             entry.last_synced_local_save_at_ms = Some(local_value);
         }
@@ -3527,8 +3890,11 @@ fn payload_again_from_single_search(
     file_name: &str,
 ) -> Result<Option<Vec<RommGameEntry>>, String> {
     let stem = strip_extension(file_name);
-    let mut url = Url::parse(&format!("{}/api/roms", session.base_url.trim_end_matches('/')))
-        .map_err(|error| format!("URL RomM invalide: {}", error))?;
+    let mut url = Url::parse(&format!(
+        "{}/api/roms",
+        session.base_url.trim_end_matches('/')
+    ))
+    .map_err(|error| format!("URL RomM invalide: {}", error))?;
     url.query_pairs_mut().append_pair("search_term", &stem);
 
     log_sync(paths, &format!("retry rom lookup with stem url={}", url));
@@ -3552,7 +3918,10 @@ fn payload_again_from_single_search(
             .map_err(|error| format!("Réponse RomM illisible pour les roms: {}", error))
     })?;
 
-    log_sync(paths, &format!("retry rom lookup status={} body={}", status, raw));
+    log_sync(
+        paths,
+        &format!("retry rom lookup status={} body={}", status, raw),
+    );
 
     if !status.is_success() {
         return Ok(None);
@@ -3616,8 +3985,11 @@ fn log_sync(paths: &PortablePaths, message: &str) {
     let line = format!("[{}] {}\n", timestamp, message);
     let log_path = logs_dir.join("romm-sync.log");
 
-    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(log_path) {
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
-

@@ -71,6 +71,14 @@ pub struct ResourceInstallResult {
     pub summary: EmulatorResourceSummary,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceImportRequest {
+    pub emulator_id: String,
+    pub resource_id: String,
+    pub source_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ResourceInstallProgressPayload {
@@ -218,6 +226,165 @@ pub async fn install_required_resources(
     })
 }
 
+pub fn pick_resource_source_paths(
+    emulator_id: &str,
+    resource_id: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let Some((title, allow_multiple, filters)) =
+        resource_file_picker_spec(emulator_id, resource_id)
+    else {
+        return Err(format!(
+            "Unsupported resource import: {}/{}",
+            emulator_id, resource_id
+        ));
+    };
+
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    for (name, extensions) in filters {
+        dialog = dialog.add_filter(name, &extensions);
+    }
+
+    let paths = if allow_multiple {
+        dialog.pick_files()
+    } else {
+        dialog.pick_file().map(|path| vec![path])
+    };
+
+    Ok(paths.map(|paths| {
+        paths
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect()
+    }))
+}
+
+pub fn import_local_resource(
+    paths: &PortablePaths,
+    request: &ResourceImportRequest,
+) -> Result<ResourceInstallResult, String> {
+    if request.source_paths.is_empty() {
+        return Err("No resource file selected.".to_string());
+    }
+
+    let mut installed = Vec::new();
+
+    for source_path in &request.source_paths {
+        let source = PathBuf::from(source_path);
+        let metadata = fs::metadata(&source).map_err(|error| {
+            format!(
+                "Cannot read selected resource {}: {}",
+                source.to_string_lossy(),
+                error
+            )
+        })?;
+
+        if !metadata.is_file() && !metadata.is_dir() {
+            return Err(format!(
+                "{} is not a supported file or folder.",
+                source.to_string_lossy()
+            ));
+        }
+
+        match (request.emulator_id.as_str(), request.resource_id.as_str()) {
+            ("pcsx2", "bios") => {
+                let target_dir = pcsx2_working_dir(paths).join("bios");
+                let destinations = install_local_resource_source(
+                    &source,
+                    &target_dir,
+                    is_pcsx2_bios_file_name,
+                    None,
+                )?;
+
+                for destination in destinations {
+                    installed.push(installed_local_resource(
+                        "bios",
+                        "BIOS",
+                        &source,
+                        &destination,
+                    ));
+                }
+            }
+            ("eden", "keys") => {
+                for root in eden_user_roots(paths) {
+                    let target_dir = root.join("keys");
+                    let destinations = install_local_resource_source(
+                        &source,
+                        &target_dir,
+                        is_eden_key_file_name,
+                        Some("prod.keys"),
+                    )?;
+
+                    for destination in destinations {
+                        installed.push(installed_local_resource(
+                            "keys",
+                            "Key",
+                            &source,
+                            &destination,
+                        ));
+                    }
+                }
+            }
+            ("eden", "firmware") => {
+                for root in eden_user_roots(paths) {
+                    let target_dir = eden_registered_dir(&root);
+                    let destinations = install_local_resource_source(
+                        &source,
+                        &target_dir,
+                        is_eden_firmware_file_name,
+                        None,
+                    )?;
+
+                    for destination in destinations {
+                        installed.push(installed_local_resource(
+                            "firmware",
+                            "Firmware",
+                            &source,
+                            &destination,
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Unsupported resource import: {}/{}",
+                    request.emulator_id, request.resource_id
+                ));
+            }
+        }
+    }
+
+    if installed.is_empty() {
+        return Err(format!(
+            "Selected file does not contain a valid {} resource.",
+            resource_label(&request.resource_id)
+        ));
+    }
+
+    if request.emulator_id == "pcsx2" && request.resource_id == "bios" {
+        ensure_pcsx2_bios_configuration(paths)?;
+    }
+
+    let summary = emulator_resource_summary(paths, &request.emulator_id);
+    if let Some(status) = summary
+        .statuses
+        .iter()
+        .find(|status| status.id == request.resource_id)
+    {
+        if status.state != "valid" {
+            return Err(format!(
+                "{} was imported, but is still not ready: {}",
+                status.label, status.message
+            ));
+        }
+    }
+
+    Ok(ResourceInstallResult {
+        emulator_id: request.emulator_id.clone(),
+        installed,
+        summary,
+    })
+}
+
 pub fn format_resource_error(summary: &EmulatorResourceSummary) -> String {
     let missing = summary
         .statuses
@@ -288,6 +455,48 @@ fn requirement(
     }
 }
 
+fn resource_file_picker_spec(
+    emulator_id: &str,
+    resource_id: &str,
+) -> Option<(&'static str, bool, Vec<(&'static str, Vec<&'static str>)>)> {
+    match (emulator_id, resource_id) {
+        ("pcsx2", "bios") => Some((
+            "Import PS2 BIOS",
+            true,
+            vec![
+                (
+                    "PS2 BIOS",
+                    vec!["bin", "rom", "mec", "rom0", "rom1", "rom2", "erom", "nvm"],
+                ),
+                ("Zip archives", vec!["zip"]),
+            ],
+        )),
+        ("eden", "keys") => Some((
+            "Import Switch prod.keys",
+            false,
+            vec![("Switch keys", vec!["keys"]), ("Zip archives", vec!["zip"])],
+        )),
+        ("eden", "firmware") => Some((
+            "Import Switch firmware",
+            true,
+            vec![
+                ("Switch firmware", vec!["nca", "cnmt", "tik", "cert"]),
+                ("Zip archives", vec!["zip"]),
+            ],
+        )),
+        _ => None,
+    }
+}
+
+fn resource_label(resource_id: &str) -> &'static str {
+    match resource_id {
+        "bios" => "BIOS",
+        "firmware" => "firmware",
+        "keys" => "keys",
+        _ => "selected",
+    }
+}
+
 fn detect_resource(
     paths: &PortablePaths,
     emulator_id: &str,
@@ -351,7 +560,13 @@ fn detect_eden_keys(
         _ => "prod.keys is missing from Eden user/keys.".to_string(),
     };
 
-    status_from_detection(requirement, state, &keys_file, message, usize::from(state == "valid"))
+    status_from_detection(
+        requirement,
+        state,
+        &keys_file,
+        message,
+        usize::from(state == "valid"),
+    )
 }
 
 fn detect_eden_firmware(
@@ -432,21 +647,15 @@ async fn install_pcsx2_bios(
 
     let mut installed = Vec::new();
     for firmware in candidates {
-        let source = download_firmware_file(app, paths, &client, session, "pcsx2", "bios", "BIOS", &firmware).await?;
-        let destinations = install_file_or_zip_flat(
-            &source,
-            &target_dir,
-            is_pcsx2_bios_file_name,
-            None,
-        )?;
+        let source = download_firmware_file(
+            app, paths, &client, session, "pcsx2", "bios", "BIOS", &firmware,
+        )
+        .await?;
+        let destinations =
+            install_file_or_zip_flat(&source, &target_dir, is_pcsx2_bios_file_name, None)?;
 
         for destination in destinations {
-            installed.push(installed_resource(
-                "bios",
-                "BIOS",
-                &firmware,
-                &destination,
-            ));
+            installed.push(installed_resource("bios", "BIOS", &firmware, &destination));
         }
     }
 
@@ -499,7 +708,10 @@ async fn install_eden_keys(
     let mut installed = Vec::new();
 
     for firmware in candidates {
-        let source = download_firmware_file(app, paths, &client, session, "eden", "keys", "Key", &firmware).await?;
+        let source = download_firmware_file(
+            app, paths, &client, session, "eden", "keys", "Key", &firmware,
+        )
+        .await?;
 
         for root in &roots {
             let target_dir = root.join("keys");
@@ -513,12 +725,7 @@ async fn install_eden_keys(
             )?;
 
             for destination in destinations {
-                installed.push(installed_resource(
-                    "keys",
-                    "Key",
-                    &firmware,
-                    &destination,
-                ));
+                installed.push(installed_resource("keys", "Key", &firmware, &destination));
             }
         }
     }
@@ -570,19 +777,17 @@ async fn install_eden_firmware(
     let mut installed = Vec::new();
 
     for firmware in candidates {
-        let source =
-            download_firmware_file(app, paths, &client, session, "eden", "firmware", "Firmware", &firmware).await?;
+        let source = download_firmware_file(
+            app, paths, &client, session, "eden", "firmware", "Firmware", &firmware,
+        )
+        .await?;
 
         for root in &roots {
             let target_dir = eden_registered_dir(root);
             fs::create_dir_all(&target_dir)
                 .map_err(|error| format!("Cannot create Eden firmware directory: {}", error))?;
-            let destinations = install_file_or_zip_flat(
-                &source,
-                &target_dir,
-                is_eden_firmware_file_name,
-                None,
-            )?;
+            let destinations =
+                install_file_or_zip_flat(&source, &target_dir, is_eden_firmware_file_name, None)?;
 
             for destination in destinations {
                 installed.push(installed_resource(
@@ -613,7 +818,9 @@ async fn fetch_platform_firmware(
     platform_tokens: &[&str],
 ) -> Result<FirmwareSearchResult, String> {
     let client = Client::new();
-    let platforms = fetch_romm_platforms(&client, session).await.unwrap_or_default();
+    let platforms = fetch_romm_platforms(&client, session)
+        .await
+        .unwrap_or_default();
     let platform_ids = platforms
         .iter()
         .filter(|platform| platform_matches(platform, platform_tokens))
@@ -680,7 +887,8 @@ async fn fetch_romm_firmware(
     .map_err(|error| format!("Invalid RomM URL: {}", error))?;
 
     if let Some(platform_id) = platform_id {
-        url.query_pairs_mut().append_pair("platform_id", platform_id);
+        url.query_pairs_mut()
+            .append_pair("platform_id", platform_id);
     }
 
     let response = client
@@ -774,7 +982,8 @@ async fn download_firmware_file(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|error| format!("Cannot read resource download: {}", error))?;
+        let chunk =
+            chunk_result.map_err(|error| format!("Cannot read resource download: {}", error))?;
         file.write_all(&chunk)
             .await
             .map_err(|error| format!("Cannot write resource file: {}", error))?;
@@ -848,6 +1057,10 @@ fn install_file_or_zip_flat(
     accepts_file_name: fn(&str) -> bool,
     forced_output_name: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
+    if source.is_dir() {
+        return install_directory_flat(source, target_dir, accepts_file_name, forced_output_name);
+    }
+
     if is_zip_file(source) {
         return extract_zip_flat(source, target_dir, accepts_file_name, forced_output_name);
     }
@@ -867,6 +1080,56 @@ fn install_file_or_zip_flat(
     fs::copy(source, &destination)
         .map_err(|error| format!("Cannot install resource file: {}", error))?;
     Ok(vec![destination])
+}
+
+fn install_local_resource_source(
+    source: &Path,
+    target_dir: &Path,
+    accepts_file_name: fn(&str) -> bool,
+    forced_output_name: Option<&str>,
+) -> Result<Vec<PathBuf>, String> {
+    install_file_or_zip_flat(source, target_dir, accepts_file_name, forced_output_name)
+}
+
+fn install_directory_flat(
+    source_dir: &Path,
+    target_dir: &Path,
+    accepts_file_name: fn(&str) -> bool,
+    forced_output_name: Option<&str>,
+) -> Result<Vec<PathBuf>, String> {
+    let files = collect_matching_files(source_dir, accepts_file_name);
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    fs::create_dir_all(target_dir)
+        .map_err(|error| format!("Cannot create resource target directory: {}", error))?;
+
+    let mut destinations = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(output_name) = forced_output_name {
+        let destination = target_dir.join(sanitize_file_name(output_name));
+        fs::copy(&files[0], &destination)
+            .map_err(|error| format!("Cannot install resource file: {}", error))?;
+        return Ok(vec![destination]);
+    }
+
+    for file in files {
+        let Some(file_name) = file.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let destination = target_dir.join(sanitize_file_name(file_name));
+        if !seen.insert(destination.clone()) {
+            continue;
+        }
+
+        fs::copy(&file, &destination)
+            .map_err(|error| format!("Cannot install resource file: {}", error))?;
+        destinations.push(destination);
+    }
+
+    Ok(destinations)
 }
 
 fn extract_zip_flat(
@@ -936,6 +1199,27 @@ fn installed_resource(
     }
 }
 
+fn installed_local_resource(
+    resource_id: &str,
+    resource_label: &str,
+    source: &Path,
+    destination: &Path,
+) -> InstalledResource {
+    let source_file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| source.to_string_lossy().to_string());
+
+    InstalledResource {
+        resource_id: resource_id.to_string(),
+        resource_label: resource_label.to_string(),
+        source_file_name,
+        destination_path: destination.to_string_lossy().to_string(),
+        verified_by_romm: false,
+    }
+}
+
 fn emit_resource_progress(
     app: &AppHandle,
     emulator_id: &str,
@@ -972,7 +1256,9 @@ fn platform_matches(platform: &RommPlatform, tokens: &[&str]) -> bool {
     .collect::<Vec<_>>()
     .join(" ");
 
-    tokens.iter().any(|token| haystack.contains(&normalize_text(token)))
+    tokens
+        .iter()
+        .any(|token| haystack.contains(&normalize_text(token)))
 }
 
 fn is_pcsx2_bios_candidate(firmware: &RommFirmware, platform_scoped: bool) -> bool {
@@ -988,8 +1274,7 @@ fn is_pcsx2_bios_candidate(firmware: &RommFirmware, platform_scoped: bool) -> bo
         || name.contains("nvm");
 
     if is_zip_file_name(&name) {
-        return platform_scoped
-            || looks_like_bios_name;
+        return platform_scoped || looks_like_bios_name;
     }
 
     if platform_scoped && is_pcsx2_bios_file_name(&name) {
@@ -1129,7 +1414,10 @@ fn ensure_pcsx2_bios_configuration(paths: &PortablePaths) -> Result<(), String> 
 
 fn select_pcsx2_bios_file_name(content: &str, bios_files: &[PathBuf]) -> Option<String> {
     let configured = get_ini_value(content, "Filenames", "BIOS");
-    if let Some(configured) = configured.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(configured) = configured
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         if bios_files.iter().any(|path| {
             path.file_name()
                 .and_then(|value| value.to_str())

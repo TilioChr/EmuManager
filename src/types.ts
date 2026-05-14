@@ -216,6 +216,40 @@ export interface ControllerProfileSaveResult {
   warning?: string | null;
 }
 
+export type GraphicsMode = "simple" | "advanced";
+export type GraphicsPreset = "native" | "greater" | "beautiful" | "epic";
+
+export interface GraphicsProfile {
+  id: string;
+  emulatorId: string;
+  platformLabel: string;
+  mode: GraphicsMode;
+  preset: GraphicsPreset;
+  resolutionScale: number;
+  graphicsApi: string;
+  fullscreen: boolean;
+  vsync: boolean;
+  aspectRatio: string;
+  antiAliasing: string;
+  anisotropicFiltering: string;
+  textureFiltering: string;
+  shaderCache: boolean;
+  widescreenHack: boolean;
+  integerScaling: boolean;
+}
+
+export interface GraphicsWriteResult {
+  emulatorId: string;
+  profileId: string;
+  configPaths: string[];
+}
+
+export interface GraphicsProfileSaveResult {
+  profiles: GraphicsProfile[];
+  writeResult?: GraphicsWriteResult | null;
+  warning?: string | null;
+}
+
 export interface LocalRomEntry {
   fileName: string;
   filePath: string;

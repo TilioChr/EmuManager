@@ -12,6 +12,8 @@ mod emulator_installer;
 mod emulator_registry;
 mod emulator_resources;
 mod game_launcher;
+mod graphics_profile_writer;
+mod graphics_profiles;
 mod local_library;
 mod manual_import;
 mod melonds_controller_writer;
@@ -36,11 +38,13 @@ use emulator_installer::{
 };
 use emulator_registry::{built_in_emulators, EmulatorDefinition};
 use emulator_resources::{
-    ensure_local_resource_configuration, install_required_resources,
-    list_emulator_resource_summaries, validate_required_resources, EmulatorResourceSummary,
-    ResourceInstallResult, RommResourceSession,
+    ensure_local_resource_configuration, import_local_resource, install_required_resources,
+    list_emulator_resource_summaries, pick_resource_source_paths, validate_required_resources,
+    EmulatorResourceSummary, ResourceImportRequest, ResourceInstallResult, RommResourceSession,
 };
 use game_launcher::{launch_game, GameLaunchResult};
+use graphics_profile_writer::{apply_graphics_profile, GraphicsWriteResult};
+use graphics_profiles::{load_graphics_profiles, save_graphics_profiles, GraphicsProfile};
 use local_library::{
     delete_local_rom, list_local_roms, list_local_saves, DeleteLocalRomResult, LocalRomEntry,
     LocalSaveEntry,
@@ -81,6 +85,14 @@ struct InstalledVersionMap {
 struct ControllerProfileSaveResult {
     profiles: Vec<ControllerProfile>,
     write_result: Option<ControllerWriteResult>,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphicsProfileSaveResult {
+    profiles: Vec<GraphicsProfile>,
+    write_result: Option<GraphicsWriteResult>,
     warning: Option<String>,
 }
 
@@ -241,6 +253,53 @@ fn is_same_controller_profile(existing: &ControllerProfile, incoming: &Controlle
 }
 
 #[tauri::command]
+fn load_graphics_profiles_command(root: Option<String>) -> Result<Vec<GraphicsProfile>, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    load_graphics_profiles(&paths)
+}
+
+#[tauri::command]
+fn save_graphics_profile_command(
+    root: Option<String>,
+    profile: GraphicsProfile,
+) -> Result<GraphicsProfileSaveResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    let mut profiles = load_graphics_profiles(&paths)?;
+
+    if let Some(index) = profiles
+        .iter()
+        .position(|entry| is_same_graphics_profile(entry, &profile))
+    {
+        profiles.remove(index);
+    }
+    profiles.push(profile.clone());
+
+    save_graphics_profiles(&paths, &profiles)?;
+
+    match apply_graphics_profile(&paths, &profile) {
+        Ok(write_result) => Ok(GraphicsProfileSaveResult {
+            profiles,
+            write_result: Some(write_result),
+            warning: None,
+        }),
+        Err(error) => Ok(GraphicsProfileSaveResult {
+            profiles,
+            write_result: None,
+            warning: Some(format!(
+                "Profil graphique sauvegarde, mais non applique: {}",
+                error
+            )),
+        }),
+    }
+}
+
+fn is_same_graphics_profile(existing: &GraphicsProfile, incoming: &GraphicsProfile) -> bool {
+    existing.id == incoming.id || existing.emulator_id == incoming.emulator_id
+}
+
+#[tauri::command]
 fn list_local_roms_command(root: Option<String>) -> Result<Vec<LocalRomEntry>, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
@@ -293,6 +352,24 @@ fn get_emulator_resource_statuses_command(
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
     Ok(list_emulator_resource_summaries(&paths))
+}
+
+#[tauri::command]
+fn pick_emulator_resource_files_command(
+    emulator_id: String,
+    resource_id: String,
+) -> Result<Option<Vec<String>>, String> {
+    pick_resource_source_paths(&emulator_id, &resource_id)
+}
+
+#[tauri::command]
+fn import_emulator_resource_command(
+    root: Option<String>,
+    request: ResourceImportRequest,
+) -> Result<ResourceInstallResult, String> {
+    let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
+    let paths = ensure_portable_tree(&root_path)?;
+    import_local_resource(&paths, &request)
 }
 
 #[tauri::command]
@@ -667,11 +744,15 @@ fn main() {
             save_app_config,
             load_controller_profiles_command,
             save_controller_profile_command,
+            load_graphics_profiles_command,
+            save_graphics_profile_command,
             list_local_roms_command,
             list_local_saves_command,
             delete_local_rom_command,
             check_emulator_installed,
             get_emulator_resource_statuses_command,
+            pick_emulator_resource_files_command,
+            import_emulator_resource_command,
             install_emulator_resources_command,
             resolve_emulator_id_for_rom_command,
             install_emulator_command,

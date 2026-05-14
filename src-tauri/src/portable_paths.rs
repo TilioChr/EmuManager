@@ -19,9 +19,7 @@ pub fn default_root() -> PathBuf {
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
 
-    exe_dir.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    })
+    exe_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 pub fn ensure_portable_tree(root: &Path) -> Result<PortablePaths, String> {
@@ -33,8 +31,9 @@ pub fn ensure_portable_tree(root: &Path) -> Result<PortablePaths, String> {
     let data = root.join("Data");
 
     for path in [&emu, &roms, &saves, &firmware, &config, &data] {
-        fs::create_dir_all(path)
-            .map_err(|error| format!("Impossible de créer {}: {}", path.to_string_lossy(), error))?;
+        fs::create_dir_all(path).map_err(|error| {
+            format!("Impossible de créer {}: {}", path.to_string_lossy(), error)
+        })?;
     }
 
     Ok(PortablePaths {

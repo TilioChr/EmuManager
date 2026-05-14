@@ -1,5 +1,6 @@
 use crate::emulator_installer::resolve_emulator_executable;
 use crate::emulator_resources::validate_required_resources;
+use crate::graphics_profile_writer::apply_saved_graphics_profile;
 use crate::portable_paths::PortablePaths;
 use crate::romm_sync::{
     launch_azahar, launch_dolphin, launch_eden, launch_melonds, launch_pcsx2, RommLaunchSession,
@@ -25,6 +26,8 @@ pub fn launch_game(
 ) -> Result<GameLaunchResult, String> {
     validate_required_resources(paths, emulator_id)?;
     let executable_path = resolve_emulator_executable(paths, emulator_id)?;
+    apply_saved_graphics_profile(paths, emulator_id)
+        .map_err(|error| format!("Profil graphique non applique: {}", error))?;
 
     let rom = PathBuf::from(rom_path);
     if !rom.exists() {

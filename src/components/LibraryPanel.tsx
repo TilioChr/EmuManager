@@ -831,8 +831,9 @@ export default function LibraryPanel({
                               )`
                             }
                           : undefined
-                      }
-                    >
+                        }
+                      >
+                      <span className="download-icon" aria-hidden="true" />
                       <span className="download-button-label">
                         {isDownloading
                           ? `Downloading... ${Math.round(visibleDownloadPercent)}%`

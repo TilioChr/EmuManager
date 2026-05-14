@@ -1,5 +1,5 @@
-use crate::portable_paths::PortablePaths;
 use crate::debug_log::emit_debug_log;
+use crate::portable_paths::PortablePaths;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
