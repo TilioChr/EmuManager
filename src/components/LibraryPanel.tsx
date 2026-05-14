@@ -536,8 +536,6 @@ export default function LibraryPanel({
 
   const loadGames = async () => {
     if (!session) {
-      setError("Offline mode: only already downloaded ROMs are available.");
-      void debugLog("warning", "library", "RomM library load skipped in offline mode");
       return;
     }
 
@@ -565,6 +563,14 @@ export default function LibraryPanel({
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    void loadGames();
+  }, [root, session]);
 
   const togglePinned = async (itemId: string) => {
     const next = pinnedItemIds.includes(itemId)
@@ -616,15 +622,6 @@ export default function LibraryPanel({
     <>
       <CollapsiblePanel
         eyebrow="Library"
-        actions={
-          <button
-            className="primary-button compact-button"
-            onClick={() => void loadGames()}
-            disabled={loading || !session}
-          >
-            {loading ? "Loading..." : session ? "Load RomM" : "Offline"}
-          </button>
-        }
       >
         <div
           className={`manual-import-zone ${
@@ -634,7 +631,7 @@ export default function LibraryPanel({
           <span className="manual-import-zone-icon" aria-hidden="true" />
           <div>
             <strong>{manualImportDragActive ? "Release to import" : "Drop local ROM"}</strong>
-            <p>{pendingManualImportFileName ?? "ROM, .zip, or .rar"}</p>
+            {pendingManualImportFileName ? <p>{pendingManualImportFileName}</p> : null}
           </div>
         </div>
 

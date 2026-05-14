@@ -328,7 +328,7 @@ export default function GraphicsSettingsPanel({
 
   return (
     <div className="graphics-panel-anchor" ref={panelRef}>
-      <CollapsiblePanel eyebrow="Graphismes" title="Presets rapides et reglages avances">
+      <CollapsiblePanel eyebrow="Graphismes" defaultCollapsed>
         {!selectedEmulator || !draft ? (
           <p className="muted">Selectionne un emulateur pour preparer ses graphismes.</p>
         ) : (

@@ -55,7 +55,7 @@ export default function RommConnectionCard({
   };
 
   return (
-    <CollapsiblePanel eyebrow="RomM" title="Connexion au serveur">
+    <CollapsiblePanel eyebrow="RomM" defaultCollapsed>
       <form className="form-grid" onSubmit={handleSubmit}>
         <label className="field">
           <span>URL du serveur</span>

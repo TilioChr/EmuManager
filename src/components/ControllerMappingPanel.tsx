@@ -315,7 +315,6 @@ export default function ControllerMappingPanel({
   const [selectedPhysicalDeviceId, setSelectedPhysicalDeviceId] = useState(keyboardDevice.id);
   const [savedPhysicalDeviceLabel, setSavedPhysicalDeviceLabel] = useState(keyboardDevice.label);
   const [emulatedControllerId, setEmulatedControllerId] = useState("");
-  const [profileName, setProfileName] = useState("");
   const [bindings, setBindings] = useState<ControllerBinding[]>([]);
   const [dolphinSettings, setDolphinSettings] =
     useState<ControllerDolphinSettings>(defaultDolphinSettings);
@@ -437,7 +436,6 @@ export default function ControllerMappingPanel({
     setEmulatedControllerId(nextController.id);
 
     if (storedProfile) {
-      setProfileName(storedProfile.name);
       setSelectedPhysicalDeviceId(storedProfile.physicalDeviceId ?? keyboardDevice.id);
       setSavedPhysicalDeviceLabel(storedProfile.physicalDeviceLabel);
       setDolphinSettings(storedProfile.dolphinSettings ?? defaultDolphinSettings);
@@ -446,7 +444,6 @@ export default function ControllerMappingPanel({
       setListeningInputId(null);
       return;
     } else {
-      setProfileName(`${selectedEmulator.name} - ${nextController.label}`);
       setSelectedPhysicalDeviceId(keyboardDevice.id);
       setSavedPhysicalDeviceLabel(keyboardDevice.label);
       setDolphinSettings(defaultDolphinSettings);
@@ -456,22 +453,6 @@ export default function ControllerMappingPanel({
     setListeningInputId(null);
     setMessage(null);
   }, [profiles, selectedEmulator]);
-
-  const completion = useMemo(() => {
-    if (!selectedController) {
-      return { done: 0, total: 0, percent: 0 };
-    }
-
-    const done = selectedController.inputs.filter((inputDefinition) =>
-      Boolean(getBindingForInput(bindings, inputDefinition.label, inputDefinition.bindingAliases))
-    ).length;
-
-    return {
-      done,
-      total: selectedController.inputs.length,
-      percent: Math.round((done / selectedController.inputs.length) * 100)
-    };
-  }, [bindings, selectedController]);
 
   const applyPhysicalInput = useCallback(
     (physicalInput: string) => {
@@ -589,7 +570,6 @@ export default function ControllerMappingPanel({
     );
 
     setEmulatedControllerId(controllerId);
-    setProfileName(matchingProfile?.name ?? `${selectedEmulator.name} - ${nextController.label}`);
     setDolphinSettings(matchingProfile?.dolphinSettings ?? defaultDolphinSettings);
     setBindings(
       matchingProfile
@@ -617,11 +597,9 @@ export default function ControllerMappingPanel({
     setSavedPhysicalDeviceLabel(device?.label ?? keyboardDevice.label);
 
     if (matchingProfile) {
-      setProfileName(matchingProfile.name);
       setDolphinSettings(matchingProfile.dolphinSettings ?? defaultDolphinSettings);
       setBindings(mergeBindingsForController(selectedController, matchingProfile.bindings));
     } else {
-      setProfileName(`${selectedEmulator.name} - ${selectedController.label}`);
       setDolphinSettings(defaultDolphinSettings);
       setBindings(createBindings(selectedController));
     }
@@ -656,7 +634,7 @@ export default function ControllerMappingPanel({
 
     setBindings(createBindings(selectedController));
     setListeningInputId(null);
-    setMessage("Mapping vide pour cette manette emulee.");
+    setMessage("Mapping reinitialise pour cette manette emulee.");
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -679,7 +657,11 @@ export default function ControllerMappingPanel({
         id:
           matchingProfile?.id ??
           createProfileId(selectedEmulator.id, selectedController.id, selectedPhysicalDevice.id),
-        name: profileName.trim() || `${selectedEmulator.name} - ${selectedController.label}`,
+        name: createInternalProfileName(
+          selectedEmulator.id,
+          selectedController.id,
+          selectedPhysicalDevice.id
+        ),
         emulatorId: selectedEmulator.id,
         platformLabel: selectedEmulator.platformLabel,
         physicalDeviceId: selectedPhysicalDevice.id,
@@ -703,17 +685,12 @@ export default function ControllerMappingPanel({
   };
 
   return (
-    <CollapsiblePanel eyebrow="Manettes" title="Mapping visuel unifie">
+    <CollapsiblePanel eyebrow="Manettes" defaultCollapsed>
       {!selectedEmulator && <p className="muted">Selectionne un emulateur pour preparer un profil.</p>}
 
       {selectedEmulator && selectedController && (
         <form className="mapping-form" onSubmit={handleSubmit}>
           <div className="mapping-grid">
-            <label className="field">
-              <span>Profil</span>
-              <input value={profileName} onChange={(event) => setProfileName(event.target.value)} />
-            </label>
-
             <label className="field">
               <span>Manette physique</span>
               <select
@@ -788,14 +765,6 @@ export default function ControllerMappingPanel({
 
           <div className="mapping-designer">
             <div className="mapping-stage-wrap">
-              <div className="mapping-stage-heading">
-                <div>
-                  <strong>{selectedController.label}</strong>
-                  <span>{selectedController.description}</span>
-                </div>
-                <small>{completion.done}/{completion.total} binds</small>
-              </div>
-
               <div className="controller-stage" aria-label={`Mapping ${selectedController.label}`}>
                 <div
                   className="controller-map-canvas"
@@ -843,29 +812,14 @@ export default function ControllerMappingPanel({
               </div>
             </div>
 
-            <aside className="mapping-side">
-              <div>
-                <small>Progression</small>
-                <strong>{completion.percent}%</strong>
-                <div className="mapping-progress-track">
-                  <span style={{ width: `${completion.percent}%` }} />
-                </div>
-              </div>
-
-              <div>
-                <small>Input actif</small>
-                <strong>{listeningInputId ? "Ecoute..." : selectedPhysicalDevice.label}</strong>
-              </div>
-
-              <div className="mapping-side-actions">
-                <button className="ghost-button compact-button" type="button" onClick={clearCurrentControllerBindings}>
-                  Effacer
-                </button>
-                <button className="primary-button compact-button" type="submit" disabled={saving}>
-                  {saving ? "Enregistrement..." : "Enregistrer"}
-                </button>
-              </div>
-            </aside>
+            <div className="mapping-side-actions">
+              <button className="ghost-button compact-button" type="button" onClick={clearCurrentControllerBindings}>
+                Réinitialiser
+              </button>
+              <button className="primary-button compact-button" type="submit" disabled={saving}>
+                {saving ? "Enregistrement..." : "Enregistrer"}
+              </button>
+            </div>
           </div>
 
           {message && (
@@ -1045,6 +999,12 @@ function findMatchingProfile(
 
 function createProfileId(emulatorId: string, controllerId: string, physicalDeviceId: string) {
   return `${emulatorId}-${controllerId}-${physicalDeviceId}`.replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
+}
+
+function createInternalProfileName(emulatorId: string, controllerId: string, physicalDeviceId: string) {
+  return `emumanager-${emulatorId}-${controllerId}-${physicalDeviceId}`
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .toLowerCase();
 }
 
 function readConnectedGamepads() {

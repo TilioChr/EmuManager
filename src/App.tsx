@@ -1265,10 +1265,17 @@ export default function App() {
       return;
     }
 
+    const emulator = emulators.find((entry) => entry.id === id);
+    if (!emulator || emulator.status !== "installed") {
+      const displayName = emulator?.name ?? id;
+      notify("error", `Install ${displayName} before adding system files.`);
+      return;
+    }
+
     const summary = resourceSummaries[id];
     const resourceLabel =
       summary?.statuses.find((status) => status.id === resourceId)?.label ?? resourceId;
-    const displayName = emulators.find((emu) => emu.id === id)?.name ?? id;
+    const displayName = emulator.name;
 
     try {
       setResourceImportingKey(importKey);
@@ -1646,7 +1653,6 @@ export default function App() {
           <aside className="sidebar">
             <div>
               <h2 className="sidebar-title">EmuManager</h2>
-              <p className="muted">{installedCount} installed</p>
             </div>
 
             <div className="sidebar-actions">
@@ -1721,24 +1727,6 @@ export default function App() {
           </aside>
 
           <main className="content">
-            <RommConnectionCard
-              defaultBaseUrl={config.romm?.baseUrl}
-              defaultUsername={config.romm?.username}
-              onConnected={handleRommConnected}
-            />
-
-            <ControllerMappingPanel
-              selectedEmulator={selectedEmulator}
-              profiles={controllerProfiles}
-              onSaveProfile={saveControllerProfile}
-            />
-
-            <GraphicsSettingsPanel
-              selectedEmulator={selectedEmulator}
-              profiles={graphicsProfiles}
-              onSaveProfile={saveGraphicsProfile}
-            />
-
             <LibraryPanel
               root={paths.root}
               session={rommSession}
@@ -1754,6 +1742,24 @@ export default function App() {
               notice={libraryNotice}
               manualImportDragActive={manualImportDragActive}
               pendingManualImportFileName={pendingManualImport?.fileName ?? null}
+            />
+
+            <GraphicsSettingsPanel
+              selectedEmulator={selectedEmulator}
+              profiles={graphicsProfiles}
+              onSaveProfile={saveGraphicsProfile}
+            />
+
+            <ControllerMappingPanel
+              selectedEmulator={selectedEmulator}
+              profiles={controllerProfiles}
+              onSaveProfile={saveControllerProfile}
+            />
+
+            <RommConnectionCard
+              defaultBaseUrl={config.romm?.baseUrl}
+              defaultUsername={config.romm?.username}
+              onConnected={handleRommConnected}
             />
           </main>
         </div>
@@ -1819,7 +1825,6 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h2 className="panel-title">Choose emulators</h2>
-                <p className="panel-subtitle">Installation</p>
               </div>
               <button className="ghost-button" onClick={() => setShowPicker(false)}>
                 Close
@@ -1849,6 +1854,7 @@ export default function App() {
                           summary={resourceSummary}
                           onImportResource={importLocalResourceForEmulator}
                           importingResourceKey={resourceImportingKey}
+                          disabled={!isInstalled}
                         />
                       </div>
                       <p>{emu.platformLabel}</p>
@@ -1867,7 +1873,7 @@ export default function App() {
                       ) : null}
                     </div>
                     <button
-                      className="primary-button picker-action-button"
+                      className={`${isInstalled ? "danger-button" : "primary-button"} picker-action-button`}
                       disabled={isInstalling || uninstallingId === emu.id}
                       style={
                         isInstalling
@@ -1908,7 +1914,6 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h2 className="panel-title">Settings</h2>
-                <p className="panel-subtitle">EmuManager</p>
               </div>
               <button
                 className="ghost-button"
@@ -2279,12 +2284,14 @@ interface ResourceIndicatorsProps {
   summary?: EmulatorResourceSummary;
   onImportResource?: (emulatorId: string, resourceId: string) => void;
   importingResourceKey?: string | null;
+  disabled?: boolean;
 }
 
 function ResourceIndicators({
   summary,
   onImportResource,
-  importingResourceKey
+  importingResourceKey,
+  disabled = false
 }: ResourceIndicatorsProps) {
   if (!summary?.requirements.length) {
     return null;
@@ -2296,16 +2303,20 @@ function ResourceIndicators({
         const isImporting =
           importingResourceKey === resourceProgressKey(summary.emulatorId, status.id);
         const className = `resource-dot resource-dot-${status.state} ${
-          onImportResource ? "resource-dot-action" : ""
+          onImportResource && !disabled ? "resource-dot-action" : ""
         }`;
         const label = resourceDotLabel(status.kind);
 
-        if (!onImportResource) {
+        if (!onImportResource || disabled) {
           return (
             <span
               key={status.id}
               className={className}
-              title={`${status.label}: ${status.message}`}
+              title={
+                disabled
+                  ? `${status.label}: install ${summary.emulatorName} before importing.`
+                  : `${status.label}: ${status.message}`
+              }
               aria-label={`${status.label}: ${status.state}`}
             >
               {label}
