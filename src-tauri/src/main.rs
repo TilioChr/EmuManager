@@ -369,6 +369,18 @@ fn import_emulator_resource_command(
 ) -> Result<ResourceInstallResult, String> {
     let root_path = root.map(PathBuf::from).unwrap_or_else(default_root);
     let paths = ensure_portable_tree(&root_path)?;
+    if !is_emulator_installed(&paths, &request.emulator_id) {
+        let emulator_name = built_in_emulators()
+            .into_iter()
+            .find(|entry| entry.id == request.emulator_id)
+            .map(|entry| entry.name.to_string())
+            .unwrap_or_else(|| request.emulator_id.clone());
+        return Err(format!(
+            "{} must be installed before importing system files.",
+            emulator_name
+        ));
+    }
+
     import_local_resource(&paths, &request)
 }
 

@@ -215,7 +215,7 @@ ol {
 }
 
 .sidebar-title {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 24px;
   font-weight: 800;
   color: #f4f7fb;
@@ -294,6 +294,7 @@ ol {
 }
 
 .sidebar-actions {
+  margin-top: 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
   gap: 8px;
@@ -668,7 +669,7 @@ button.resource-dot {
 }
 
 .manual-import-zone {
-  min-height: 92px;
+  min-height: 72px;
   display: flex;
   gap: 14px;
   align-items: center;
@@ -836,12 +837,29 @@ button.resource-dot {
   gap: 8px;
 }
 
+.library-item-list .library-item-main {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  column-gap: 12px;
+  align-items: center;
+}
+
 .library-heading-row {
   min-width: 0;
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.library-item-list .library-heading-row {
+  display: contents;
+}
+
+.library-item-list .library-title-block,
+.library-item-list .library-file-name,
+.library-item-list .library-save-meta {
+  grid-column: 1;
 }
 
 .library-title-block {
@@ -877,6 +895,12 @@ button.resource-dot {
   display: inline-flex;
   gap: 6px;
   align-items: center;
+}
+
+.library-item-list .library-icon-actions {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  align-self: center;
 }
 
 .library-file-name {
@@ -1065,7 +1089,7 @@ button.resource-dot {
 .collapsible-header-main {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
   padding-left: 48px;
 }
@@ -1125,7 +1149,7 @@ button.resource-dot {
 }
 
 .collapsible-body {
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .inline-notice {
@@ -2040,7 +2064,7 @@ button.resource-dot {
 
 .mapping-grid {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr auto;
   gap: 14px;
   align-items: end;
 }
@@ -2088,9 +2112,9 @@ button.resource-dot {
 
 .mapping-designer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .mapping-stage-wrap,
@@ -2240,6 +2264,7 @@ button.resource-dot {
 .mapping-side-actions {
   display: flex;
   gap: 10px;
+  justify-content: flex-end;
   flex-wrap: wrap;
 }
 
