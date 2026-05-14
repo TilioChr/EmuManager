@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   EmulatorEntry,
   GraphicsPreset,
@@ -246,9 +246,25 @@ export default function GraphicsSettingsPanel({
     () => (selectedEmulator ? getCapabilities(selectedEmulator.id) : fallbackCapabilities),
     [selectedEmulator]
   );
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState<GraphicsProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const pendingScrollClampRef = useRef(false);
+
+  useEffect(() => {
+    if (!pendingScrollClampRef.current) {
+      return;
+    }
+
+    pendingScrollClampRef.current = false;
+
+    const frameId = window.requestAnimationFrame(() => {
+      stabilizeAppScroll(panelRef.current);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [draft?.mode]);
 
   useEffect(() => {
     if (!selectedEmulator) {
@@ -273,6 +289,8 @@ export default function GraphicsSettingsPanel({
     if (!draft || !selectedEmulator) {
       return;
     }
+
+    pendingScrollClampRef.current = true;
 
     setDraft((current) => {
       if (!current) {
@@ -309,208 +327,211 @@ export default function GraphicsSettingsPanel({
   };
 
   return (
-    <CollapsiblePanel eyebrow="Graphismes" title="Presets rapides et reglages avances">
-      {!selectedEmulator || !draft ? (
-        <p className="muted">Selectionne un emulateur pour preparer ses graphismes.</p>
-      ) : (
-        <form className="graphics-form" onSubmit={handleSubmit}>
-          <div className="graphics-mode-row">
-            <div>
-              <strong>{selectedEmulator.name}</strong>
-              <span>{selectedEmulator.platformLabel}</span>
-            </div>
-            <label className="mode-switch">
-              <input
-                type="checkbox"
-                checked={draft.mode === "advanced"}
-                onChange={(event) => handleAdvancedToggle(event.target.checked)}
-              />
-              <span className="mode-switch-track" aria-hidden="true" />
-              <span>Mode avance</span>
-            </label>
-          </div>
-
-          {draft.mode === "simple" ? (
-            <div className="graphics-preset-grid">
-              {presetCatalog.map((preset) => (
-                <label
-                  key={preset.id}
-                  className={`graphics-preset-card ${
-                    draft.preset === preset.id ? "graphics-preset-card-active" : ""
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={draft.preset === preset.id}
-                    onChange={() => handlePresetChange(preset.id)}
-                  />
-                  <span>
-                    <strong>{preset.label}</strong>
-                    <small>{preset.description}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <div className="graphics-advanced-grid">
-              <label className="field">
-                <span>Resolution</span>
-                <select
-                  value={draft.resolutionScale}
-                  onChange={(event) => updateDraft("resolutionScale", Number(event.target.value))}
-                >
-                  {Array.from({ length: capabilities.maxResolutionScale }, (_, index) => index + 1).map((scale) => (
-                    <option key={scale} value={scale}>
-                      {scale === 1 ? "Native" : `x${scale}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Graphics API</span>
-                <select
-                  value={draft.graphicsApi}
-                  onChange={(event) => updateDraft("graphicsApi", event.target.value)}
-                >
-                  {capabilities.graphicsApis.map((api) => (
-                    <option key={api.id} value={api.id}>
-                      {api.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>{capabilities.aspectRatioLabel}</span>
-                <select
-                  value={draft.aspectRatio}
-                  onChange={(event) => updateDraft("aspectRatio", event.target.value)}
-                >
-                  {capabilities.aspectRatios.map((ratio) => (
-                    <option key={ratio.id} value={ratio.id}>
-                      {ratio.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {capabilities.antiAliasing.length > 1 ? (
-                <label className="field">
-                  <span>Anti-aliasing</span>
-                  <select
-                    value={draft.antiAliasing}
-                    onChange={(event) => updateDraft("antiAliasing", event.target.value)}
-                  >
-                    {capabilities.antiAliasing.map((optionValue) => (
-                      <option key={optionValue.id} value={optionValue.id}>
-                        {optionValue.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-
-              {capabilities.anisotropicFiltering.length > 1 ? (
-                <label className="field">
-                  <span>Anisotropic filtering</span>
-                  <select
-                    value={draft.anisotropicFiltering}
-                    onChange={(event) => updateDraft("anisotropicFiltering", event.target.value)}
-                  >
-                    {capabilities.anisotropicFiltering.map((optionValue) => (
-                      <option key={optionValue.id} value={optionValue.id}>
-                        {optionValue.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-
-              <label className="field">
-                <span>Texture filtering</span>
-                <select
-                  value={draft.textureFiltering}
-                  onChange={(event) => updateDraft("textureFiltering", event.target.value)}
-                >
-                  {capabilities.textureFiltering.map((optionValue) => (
-                    <option key={optionValue.id} value={optionValue.id}>
-                      {optionValue.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="graphics-toggle-grid">
-                <label className="toggle-field">
-                  <input
-                    type="checkbox"
-                    checked={draft.fullscreen}
-                    onChange={(event) => updateDraft("fullscreen", event.target.checked)}
-                  />
-                  <span>Fullscreen on launch</span>
-                </label>
-                <label className="toggle-field">
-                  <input
-                    type="checkbox"
-                    checked={draft.vsync}
-                    onChange={(event) => updateDraft("vsync", event.target.checked)}
-                  />
-                  <span>VSync</span>
-                </label>
-                <label className="toggle-field">
-                  <input
-                    type="checkbox"
-                    checked={draft.shaderCache}
-                    onChange={(event) => updateDraft("shaderCache", event.target.checked)}
-                  />
-                  <span>Shader cache</span>
-                </label>
-                {capabilities.showWidescreenHack ? (
-                  <label className="toggle-field">
-                    <input
-                      type="checkbox"
-                      checked={draft.widescreenHack}
-                      onChange={(event) => updateDraft("widescreenHack", event.target.checked)}
-                    />
-                    <span>Widescreen hack</span>
-                  </label>
-                ) : null}
-                {capabilities.showIntegerScaling ? (
-                  <label className="toggle-field">
-                    <input
-                      type="checkbox"
-                      checked={draft.integerScaling}
-                      onChange={(event) => updateDraft("integerScaling", event.target.checked)}
-                    />
-                    <span>Integer scaling</span>
-                  </label>
-                ) : null}
+    <div className="graphics-panel-anchor" ref={panelRef}>
+      <CollapsiblePanel eyebrow="Graphismes" title="Presets rapides et reglages avances">
+        {!selectedEmulator || !draft ? (
+          <p className="muted">Selectionne un emulateur pour preparer ses graphismes.</p>
+        ) : (
+          <form className="graphics-form" onSubmit={handleSubmit}>
+            <div className="graphics-mode-row">
+              <div>
+                <strong>{selectedEmulator.name}</strong>
+                <span>{selectedEmulator.platformLabel}</span>
               </div>
+              <label className="mode-switch">
+                <input
+                  type="checkbox"
+                  checked={draft.mode === "advanced"}
+                  onChange={(event) => handleAdvancedToggle(event.target.checked)}
+                />
+                <span className="mode-switch-track" aria-hidden="true" />
+                <span>Mode avance</span>
+              </label>
             </div>
-          )}
 
-          <div className="graphics-actions">
-            <button className="primary-button compact-button" type="submit" disabled={saving}>
-              {saving ? "Enregistrement..." : "Enregistrer les graphismes"}
-            </button>
-          </div>
+            {draft.mode === "simple" ? (
+              <div className="graphics-preset-grid">
+                {presetCatalog.map((preset) => (
+                  <label
+                    key={preset.id}
+                    className={`graphics-preset-card ${
+                      draft.preset === preset.id ? "graphics-preset-card-active" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={draft.preset === preset.id}
+                      onChange={() => handlePresetChange(preset.id)}
+                    />
+                    <span>
+                      <strong>{preset.label}</strong>
+                      <small>{preset.description}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="graphics-advanced-grid">
+                <label className="field">
+                  <span>Resolution</span>
+                  <select
+                    value={draft.resolutionScale}
+                    onChange={(event) => updateDraft("resolutionScale", Number(event.target.value))}
+                  >
+                    {Array.from({ length: capabilities.maxResolutionScale }, (_, index) => index + 1).map((scale) => (
+                      <option key={scale} value={scale}>
+                        {scale === 1 ? "Native" : `x${scale}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-          {message ? (
-            <p
-              className={`form-message status-message ${
-                message.includes("Impossible") || message.includes("non applique")
-                  ? "error-message"
-                  : "success-message"
-              }`}
-            >
-              {message}
-            </p>
-          ) : null}
-        </form>
-      )}
-    </CollapsiblePanel>
+                <label className="field">
+                  <span>Graphics API</span>
+                  <select
+                    value={draft.graphicsApi}
+                    onChange={(event) => updateDraft("graphicsApi", event.target.value)}
+                  >
+                    {capabilities.graphicsApis.map((api) => (
+                      <option key={api.id} value={api.id}>
+                        {api.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>{capabilities.aspectRatioLabel}</span>
+                  <select
+                    value={draft.aspectRatio}
+                    onChange={(event) => updateDraft("aspectRatio", event.target.value)}
+                  >
+                    {capabilities.aspectRatios.map((ratio) => (
+                      <option key={ratio.id} value={ratio.id}>
+                        {ratio.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {capabilities.antiAliasing.length > 1 ? (
+                  <label className="field">
+                    <span>Anti-aliasing</span>
+                    <select
+                      value={draft.antiAliasing}
+                      onChange={(event) => updateDraft("antiAliasing", event.target.value)}
+                    >
+                      {capabilities.antiAliasing.map((optionValue) => (
+                        <option key={optionValue.id} value={optionValue.id}>
+                          {optionValue.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {capabilities.anisotropicFiltering.length > 1 ? (
+                  <label className="field">
+                    <span>Anisotropic filtering</span>
+                    <select
+                      value={draft.anisotropicFiltering}
+                      onChange={(event) => updateDraft("anisotropicFiltering", event.target.value)}
+                    >
+                      {capabilities.anisotropicFiltering.map((optionValue) => (
+                        <option key={optionValue.id} value={optionValue.id}>
+                          {optionValue.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                <label className="field">
+                  <span>Texture filtering</span>
+                  <select
+                    value={draft.textureFiltering}
+                    onChange={(event) => updateDraft("textureFiltering", event.target.value)}
+                  >
+                    {capabilities.textureFiltering.map((optionValue) => (
+                      <option key={optionValue.id} value={optionValue.id}>
+                        {optionValue.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="graphics-toggle-grid">
+                  <label className="toggle-field">
+                    <input
+                      type="checkbox"
+                      checked={draft.fullscreen}
+                      onChange={(event) => updateDraft("fullscreen", event.target.checked)}
+                    />
+                    <span>Fullscreen on launch</span>
+                  </label>
+                  <label className="toggle-field">
+                    <input
+                      type="checkbox"
+                      checked={draft.vsync}
+                      onChange={(event) => updateDraft("vsync", event.target.checked)}
+                    />
+                    <span>VSync</span>
+                  </label>
+                  <label className="toggle-field">
+                    <input
+                      type="checkbox"
+                      checked={draft.shaderCache}
+                      onChange={(event) => updateDraft("shaderCache", event.target.checked)}
+                    />
+                    <span>Shader cache</span>
+                  </label>
+                  {capabilities.showWidescreenHack ? (
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={draft.widescreenHack}
+                        onChange={(event) => updateDraft("widescreenHack", event.target.checked)}
+                      />
+                      <span>Widescreen hack</span>
+                    </label>
+                  ) : null}
+                  {capabilities.showIntegerScaling ? (
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={draft.integerScaling}
+                        onChange={(event) => updateDraft("integerScaling", event.target.checked)}
+                      />
+                      <span>Integer scaling</span>
+                    </label>
+                  ) : null}
+                </div>
+              </div>
+            )}
+
+            <div className="graphics-actions">
+              <button className="primary-button compact-button" type="submit" disabled={saving}>
+                {saving ? "Enregistrement..." : "Enregistrer les graphismes"}
+              </button>
+            </div>
+
+            {message ? (
+              <p
+                className={`form-message status-message ${
+                  message.includes("Impossible") || message.includes("non applique")
+                    ? "error-message"
+                    : "success-message"
+                }`}
+              >
+                {message}
+              </p>
+            ) : null}
+          </form>
+        )}
+      </CollapsiblePanel>
+    </div>
   );
+
 }
 
 function createDefaultProfile(emulator: EmulatorEntry, capabilities: GraphicsCapabilities): GraphicsProfile {
@@ -619,6 +640,24 @@ function option(id: string, label: string): GraphicsOption {
 
 function optionExists(options: GraphicsOption[], value: string) {
   return options.some((optionValue) => optionValue.id === value);
+}
+
+function stabilizeAppScroll(panel: HTMLElement | null) {
+  const container = panel?.closest(".window-content");
+  if (container instanceof HTMLElement) {
+    clampScrollTop(container);
+  }
+
+  window.scrollTo(0, 0);
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
+
+function clampScrollTop(container: HTMLElement) {
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  if (container.scrollTop > maxScrollTop) {
+    container.scrollTop = maxScrollTop;
+  }
 }
 
 function resolveAntiAliasing(value: string, options: GraphicsOption[]) {

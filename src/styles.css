@@ -38,6 +38,7 @@ html,
 body {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -51,6 +52,7 @@ body {
 #root {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 button {
@@ -187,7 +189,10 @@ ol {
 
 .window-content {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
 }
 
 .app-shell {
@@ -218,10 +223,12 @@ ol {
 
 .content {
   min-width: 0;
+  min-height: 0;
   padding: 24px;
   display: grid;
   gap: 20px;
   align-content: start;
+  overflow-anchor: none;
 }
 
 .panel,
@@ -1879,6 +1886,12 @@ button.resource-dot {
 .graphics-form {
   display: grid;
   gap: 18px;
+  overflow-anchor: none;
+}
+
+.graphics-panel-anchor {
+  min-width: 0;
+  overflow-anchor: none;
 }
 
 .graphics-mode-row {
