@@ -366,6 +366,7 @@ pub fn launch_dolphin(
         .current_dir(&working_directory)
         .arg("-u")
         .arg(&profile_user_dir)
+        .arg("--batch")
         .arg("--exec")
         .arg(rom_path)
         .status()
@@ -436,6 +437,7 @@ fn launch_plain_dolphin(
 
     let status = Command::new(executable_path)
         .current_dir(&working_directory)
+        .arg("--batch")
         .arg("--exec")
         .arg(rom_path)
         .status()
